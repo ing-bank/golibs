@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"github.com/ing-bank/orchestration-pkg/internal/example"
-	"github.com/ing-bank/orchestration-pkg/pkg/orchestration"
 	"log"
 	"net/http"
+
+	"github.com/ing-bank/golibs/internal/example"
+	"github.com/ing-bank/golibs/pkg/orchestration"
 )
 
 func main() {

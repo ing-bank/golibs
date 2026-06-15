@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/ing-bank/orchestration-pkg/pkg/orchestration"
+
+	"github.com/ing-bank/golibs/pkg/orchestration"
 )
 
 var _ orchestration.Service = &MemoryApiCreate{}

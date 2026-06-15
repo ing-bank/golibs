@@ -3,9 +3,10 @@ package orchestration
 import (
 	"context"
 	"errors"
-	"github.com/ing-bank/orchestration-pkg/pkg/task"
 	"log"
 	"strings"
+
+	task "github.com/ing-bank/golibs/pkg/task/runnable"
 )
 
 type Service interface {

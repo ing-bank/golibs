@@ -1,0 +1,213 @@
+logging:
+  level: info
+  format: request-id # or json supported
+
+tracing:
+  jaegerEndpoint: "http://localhost:14268/api/traces"
+  serviceName: "example-api"
+  serviceVersion: ""
+  environment: ""
+  enabled: false
+
+apis:
+  '/v1/example':
+    enabled: true
+    middleware:
+      userAuth:
+        enabled: false
+        header: ""
+        pcodeheader: ""
+      npaAuth:
+        enabled: false
+        header: ""
+        allowednpas: []
+      certificateAuth:
+        enabled: false
+        certificates:
+        - teams: ["team1"]
+          actions: ["*"]
+          environments: ["*"]
+          cns:
+            - localhost
+            - client.example.com
+
+skipPaths: &skipPaths
+  - /metrics
+  - /health
+  - /ready
+  - /healthz
+  - /readyz
+  - /swagger
+
+tlsdefaults: &tlsdefaults
+  cert: "./examples/mtls-server/tls.crt"
+  key: "./examples/mtls-server/tls.key"
+  rootCAs:
+    - ./examples/mtls-server/ca.crt
+  minVersion: TLS 1.2
+  clientAuthType: RequireAndVerifyClientCert
+
+server:
+  sidecarServices:
+    pprof:
+      enabled: false
+    metrics:
+      path: /metrics
+      enabled: true
+    healthcheck:
+      enabled: true
+      interval: 5s
+      systemInfo: true
+      component:
+        name: example-api
+        version: 1.0.0
+        environment: development
+      probes:
+        - name: default-healthz
+          description: "a http health check"
+          endpoints:
+            - /healthz
+          httpGet:
+            # The default target is the main server. The manager automatically infers
+            # scheme, host, port, and TLS config using default values unless explicitly set.
+            path: /healthz
+        - name: telnet-check
+          description: "a connectivity check"
+          endpoints:
+            - /readyz
+          telnet:
+            address: 127.0.0.1:8051
+        - name: external-http-probe
+          description: "an external http health check"
+          mayFail: true
+          endpoints:
+            - /healthz
+          httpGet:
+            path: /healthz
+            scheme: https
+            host: 127.0.0.1
+            port: 8051
+            httpHeaders:
+              - name: X-Username
+                value: foobar
+            tls:
+              cert: "./examples/mtls-server/tls.crt"
+              key: "./examples/mtls-server/tls.key"
+              insecureSkipVerify: true
+        - name: external-telnet-with-tls
+          description: "an external telnet health check"
+          mayFail: true
+          endpoints:
+            - /healthz
+          telnet:
+            address: 127.0.0.1:8051
+            tls:
+              cert: "./examples/mtls-server/tls.crt"
+              key: "./examples/mtls-server/tls.key"
+              insecureSkipVerify: true
+
+    proxy:
+      enabled: true
+      basePath: "/proxy"
+      client:
+        tls:
+          <<: *tlsdefaults
+          insecureSkipVerify: true
+      routes:
+        - pathPrefix: "/webserver"
+          targetURL: https://127.0.0.1:8051
+
+  internalServices:
+    healthcheck:
+      enabled: true
+    metrics:
+      enabled: false
+    pprof:
+      enabled: false
+    proxy:
+      enabled: true
+      basePath: "/proxy"
+      client:
+        tls:
+          <<: *tlsdefaults
+          insecureSkipVerify: true
+      routes:
+        - pathPrefix: "/sidecar"
+          targetURL: https://127.0.0.1:9051
+
+  tls:
+    <<: *tlsdefaults
+    clientAuthType: RequireAndVerifyClientCert
+
+  proxy:
+    host: "127.0.0.1"
+    port: 9093
+    enabled: true
+    basePath: "/v1/proxy"
+    # client:
+    #   tls:
+    #     <<: *tlsdefaults
+    #     insecureSkipVerify: true
+    routes:
+      - pathPrefix: "/webserver"
+        targetURL: https://127.0.0.1:8051
+    override:
+      tls:
+        disabled: true
+      middleware:
+        oauth:
+          enabled: false
+          # clientCAFile: tmp/certs/service-ca.crt
+          bypassAuthForPaths:
+            - /healthz
+            - /readyz
+            - /status
+          resources: |
+            {"/": {"namespace":"example-namespace","resource":"namespaces","verb":"get"}}
+      internalServices:
+        healthcheck:
+          enabled: true
+        metrics:
+          enabled: false
+        pprof:
+          enabled: false
+
+  sidecar:
+    host: "127.0.0.1"
+    port: 9051
+
+  http:
+    host: "127.0.0.1"
+    port: 8051
+    readTimeout: 10s
+    readHeaderTimeout: 10s
+    writeTimeout: 10s
+    shutdownTimeout: 60s # it should match the terminationGracePeriodSeconds
+    maxHeaderBytes: 1048576
+
+  middleware:
+    recovery:
+      enabled: true
+    metrics:
+      enabled: true
+      skipPaths: *skipPaths
+    logging:
+      enabled: true
+      skipPaths: *skipPaths
+    tracing:
+      enabled: false
+      serviceName: "example-api"
+      skipPaths: *skipPaths
+    requestID:
+      enabled: true
+    gzip:
+      enabled: false
+    certificateAuth:
+      enabled: true
+      disableLogging: true
+      certificates:
+        - teams: ["team2"]
+          actions: ["*"]
+          roles: ["*"]
+          environments: ["*"]
+          cns: ["-"]

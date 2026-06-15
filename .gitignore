@@ -1,0 +1,6 @@
+.idea
+.env
+*.bak
+*.tmp
+.vscode
+/tmp
