@@ -75,7 +75,7 @@ func FilterEmpty[S ~[]E, E *P, P any](s S) []E {
 
 // Filter creates a new slice with elements from s that should be kept
 func Filter[S ~[]E, E any](s S, keep func(item E) bool) []E {
-	filtered := make([]E, 0)
+	filtered := make([]E, 0, len(s))
 	for _, item := range s {
 		if keep(item) {
 			filtered = append(filtered, item)
@@ -231,6 +231,25 @@ func RemoveIndex[S ~[]E, E any](s *S, index int) {
 		return
 	}
 	*s = append((*s)[:index], (*s)[index+1:]...)
+}
+
+// Remove removes all occurrences of item in s
+func Remove[S ~[]E, E comparable](s *S, item E) {
+	RemoveFunc(s, func(current E) bool {
+		return current == item
+	})
+}
+
+// RemoveFunc removes all occurrences where f is true in s
+func RemoveFunc[S ~[]E, E any](s *S, f func(item E) bool) {
+	if s == nil || *s == nil || len(*s) == 0 {
+		return
+	}
+
+	filtered := Filter(*s, func(item E) bool {
+		return !f(item)
+	})
+	*s = S(filtered)
 }
 
 // Clone returns a copy of the provided slice.

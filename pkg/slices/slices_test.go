@@ -3,7 +3,7 @@ package slices
 import (
 	"fmt"
 	"reflect"
-	"slices"
+	goslices "slices"
 	"testing"
 )
 
@@ -205,7 +205,7 @@ func TestMapValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := MapValues(tt.in); !slices.Equal(tt.want, got) {
+			if got := MapValues(tt.in); !goslices.Equal(tt.want, got) {
 				t.Errorf("%s = %v, want %v", tt.name, got, tt.want)
 			}
 		})
@@ -395,7 +395,7 @@ func TestConcat_Union(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Concat(tt.a, tt.b)
-			if !slices.Equal(got, tt.want) {
+			if !goslices.Equal(got, tt.want) {
 				t.Errorf("Concat(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
@@ -443,7 +443,7 @@ func TestOverlap_Intersection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Overlap(tt.a, tt.b)
-			if !slices.Equal(got, tt.want) {
+			if !goslices.Equal(got, tt.want) {
 				t.Errorf("Overlap(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
@@ -497,14 +497,14 @@ func TestDifference(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Difference(tt.a, tt.b)
-			if !slices.Equal(got, tt.want) {
+			if !goslices.Equal(got, tt.want) {
 				t.Errorf("Difference(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 
 			got = DifferenceCmp(tt.a, tt.b, func(a int) int {
 				return a
 			})
-			if !slices.Equal(got, tt.want) {
+			if !goslices.Equal(got, tt.want) {
 				t.Errorf("Difference(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
@@ -554,9 +554,9 @@ func TestSymmetricDifference(t *testing.T) {
 			t.Parallel()
 			got := SymmetricDifference(tt.a, tt.b)
 			// Order is not guaranteed, so sort before comparing
-			slices.Sort(got)
-			slices.Sort(tt.want)
-			if !slices.Equal(got, tt.want) {
+			goslices.Sort(got)
+			goslices.Sort(tt.want)
+			if !goslices.Equal(got, tt.want) {
 				t.Errorf("SymmetricDifference(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
@@ -720,6 +720,161 @@ func TestRemoveIndex(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("keeps nil slice nil", func(t *testing.T) {
+		var input []int
+		RemoveIndex(&input, 0)
+		if input != nil {
+			t.Errorf("RemoveIndex() changed nil slice to non-nil: got %v", input)
+		}
+	})
+}
+
+func TestRemove(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []int
+		item     int
+		expected []int
+	}{
+		{
+			name:     "removes all occurrences in middle and tail",
+			input:    []int{1, 2, 3, 2, 4, 2, 5},
+			item:     2,
+			expected: []int{1, 3, 4, 5},
+		},
+		{
+			name:     "removes all occurrences when contiguous",
+			input:    []int{7, 7, 7, 1, 2, 7, 7},
+			item:     7,
+			expected: []int{1, 2},
+		},
+		{
+			name:     "removes all elements when every element matches",
+			input:    []int{9, 9, 9},
+			item:     9,
+			expected: []int{},
+		},
+		{
+			name:     "keeps slice unchanged when item is absent",
+			input:    []int{1, 2, 3},
+			item:     8,
+			expected: []int{1, 2, 3},
+		},
+		{
+			name:     "works with empty slice",
+			input:    []int{},
+			item:     1,
+			expected: []int{},
+		},
+		{
+			name:     "removes first and last occurrences",
+			input:    []int{5, 1, 2, 3, 5},
+			item:     5,
+			expected: []int{1, 2, 3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Remove(&tt.input, tt.item)
+			if !reflect.DeepEqual(tt.input, tt.expected) {
+				t.Errorf("Remove(%v, %d) = %v, want %v", tt.input, tt.item, tt.input, tt.expected)
+			}
+		})
+	}
+
+	t.Run("keeps nil slice nil", func(t *testing.T) {
+		var input []int
+		Remove(&input, 1)
+		if input != nil {
+			t.Errorf("Remove() changed nil slice to non-nil: got %v", input)
+		}
+	})
+}
+
+func TestRemoveFunc(t *testing.T) {
+	type person struct {
+		name   string
+		active bool
+	}
+
+	tests := []struct {
+		name     string
+		input    []int
+		remove   func(int) bool
+		expected []int
+	}{
+		{
+			name:     "removes all matching even numbers",
+			input:    []int{1, 2, 3, 4, 5, 6, 8},
+			remove:   func(v int) bool { return v%2 == 0 },
+			expected: []int{1, 3, 5},
+		},
+		{
+			name:     "removes all matching numbers when contiguous",
+			input:    []int{4, 4, 4, 1, 2, 4},
+			remove:   func(v int) bool { return v == 4 },
+			expected: []int{1, 2},
+		},
+		{
+			name:     "removes all elements when predicate always true",
+			input:    []int{1, 2, 3},
+			remove:   func(int) bool { return true },
+			expected: []int{},
+		},
+		{
+			name:     "keeps slice unchanged when predicate never matches",
+			input:    []int{1, 2, 3},
+			remove:   func(int) bool { return false },
+			expected: []int{1, 2, 3},
+		},
+		{
+			name:     "works with empty slice",
+			input:    []int{},
+			remove:   func(int) bool { return true },
+			expected: []int{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RemoveFunc(&tt.input, tt.remove)
+			if !reflect.DeepEqual(tt.input, tt.expected) {
+				t.Errorf("RemoveFunc() = %v, want %v", tt.input, tt.expected)
+			}
+		})
+	}
+
+	t.Run("keeps nil slice nil", func(t *testing.T) {
+		var input []int
+		RemoveFunc(&input, func(int) bool { return true })
+		if input != nil {
+			t.Errorf("RemoveFunc() changed nil slice to non-nil: got %v", input)
+		}
+	})
+
+	t.Run("works with non-comparable element types", func(t *testing.T) {
+		input := []person{
+			{name: "alice", active: true},
+			{name: "bob", active: false},
+			{name: "carl", active: false},
+			{name: "dana", active: true},
+		}
+
+		RemoveFunc(&input, func(p person) bool {
+			return !p.active
+		})
+
+		expected := []person{
+			{name: "alice", active: true},
+			{name: "dana", active: true},
+		}
+
+		if !reflect.DeepEqual(input, expected) {
+			t.Errorf("RemoveFunc() = %v, want %v", input, expected)
+		}
+	})
 }
 
 func TestClone(t *testing.T) {
