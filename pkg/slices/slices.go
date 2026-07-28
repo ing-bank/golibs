@@ -226,6 +226,7 @@ func SymmetricDifferenceCmp[S ~[]T, T any, E comparable](a S, b S, comp func(T) 
 	return slices.Concat(differenceA, differenceB)
 }
 
+// RemoveIndex removes the provided index from the slice. Requires reference to slice.
 func RemoveIndex[S ~[]E, E any](s *S, index int) {
 	if index < 0 || index >= len(*s) {
 		return
@@ -233,14 +234,14 @@ func RemoveIndex[S ~[]E, E any](s *S, index int) {
 	*s = append((*s)[:index], (*s)[index+1:]...)
 }
 
-// Remove removes all occurrences of item in s
+// Remove removes all occurrences of item in s. Requires reference to slice.
 func Remove[S ~[]E, E comparable](s *S, item E) {
 	RemoveFunc(s, func(current E) bool {
 		return current == item
 	})
 }
 
-// RemoveFunc removes all occurrences where f is true in s
+// RemoveFunc removes all occurrences where f is true in s. Requires reference to slice.
 func RemoveFunc[S ~[]E, E any](s *S, f func(item E) bool) {
 	if s == nil || *s == nil || len(*s) == 0 {
 		return
