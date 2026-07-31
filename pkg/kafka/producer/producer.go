@@ -114,11 +114,11 @@ func (p *Producer) Produce(msg *kafka.Message, opts ...ProduceOption) error {
 		}
 	}
 
-	if !options.WaitForDelivery {
-		return p.kafkaClient.Produce(msg, p.deliveryCh)
+	if options.WaitForDelivery {
+		return p.produceAndWait(msg, options)
 	}
 
-	return p.produceAndWait(msg, options)
+	return p.kafkaClient.Produce(msg, p.deliveryCh)
 }
 
 func (p *Producer) produceAndWait(msg *kafka.Message, options *ProduceOptions) error {
