@@ -68,6 +68,65 @@ func TestProducer(t *testing.T) {
 	}
 }
 
+func TestProducer_WaitForDelivery(t *testing.T) {
+	t.Parallel()
+
+	cluster := SetupMockCluster(t)
+	client := MockProducer(t, cluster)
+
+	topic := "topic-wait-for-delivery"
+	payload := []byte("wait-for-delivery")
+	msg := NewMessage(payload, topic)
+
+	if err := client.Produce(msg, WithWaitForDelivery(true)); err != nil {
+		t.Fatalf("expected produce to wait and succeed, got error: %v", err)
+	}
+
+	select {
+	case event := <-client.DeliveryReports():
+		report, ok := event.(*confluentinckafka.Message)
+		if !ok {
+			t.Fatalf("expected *kafka.Message, got %T", event)
+		}
+		if report.TopicPartition.Error != nil {
+			t.Fatalf("expected successful delivery report, got error: %v", report.TopicPartition.Error)
+		}
+		if !reflect.DeepEqual(report.Value, payload) {
+			t.Fatalf("unexpected delivered payload: got %q want %q", report.Value, payload)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for forwarded delivery report")
+	}
+}
+
+func TestParseProduceOptions_DefaultsAndTimeout(t *testing.T) {
+	t.Parallel()
+
+	options := NewProduceOptions()
+	if err := WithWaitForDelivery(true)(options); err != nil {
+		t.Fatalf("unexpected error applying wait option: %v", err)
+	}
+	if !options.WaitForDelivery {
+		t.Fatal("expected wait for delivery to be enabled")
+	}
+	if options.WaitForDeliveryTimeout != 10*time.Second {
+		t.Fatalf("unexpected default wait timeout: got %s, want %s", options.WaitForDeliveryTimeout, 10*time.Second)
+	}
+
+	options = NewProduceOptions()
+	for _, option := range []ProduceOption{
+		WithWaitForDelivery(true),
+		WithWaitForDeliveryTimeout(1234 * time.Millisecond),
+	} {
+		if err := option(options); err != nil {
+			t.Fatalf("unexpected error applying produce option: %v", err)
+		}
+	}
+	if options.WaitForDeliveryTimeout != 1234*time.Millisecond {
+		t.Fatalf("unexpected overridden wait timeout: got %s", options.WaitForDeliveryTimeout)
+	}
+}
+
 func MockProducer(t *testing.T, cluster *confluentinckafka.MockCluster) *Producer {
 	t.Helper()
 	// Create a new Producer

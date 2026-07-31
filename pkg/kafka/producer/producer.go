@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/gin-gonic/gin"
@@ -17,7 +18,7 @@ var _ ProducerInterface = (*Producer)(nil)
 
 // ProducerInterface defines the methods that a Kafka producer must implement.
 type ProducerInterface interface {
-	Produce(msg *kafka.Message) error
+	Produce(msg *kafka.Message, opts ...ProduceOption) error
 	Close() error
 	MonitorEvents(ctx context.Context) chan error
 	IsHealthy() bool
@@ -105,8 +106,49 @@ func NewMessage(value []byte, topic string, headers ...kafka.Header) *kafka.Mess
 // Produce sends a Kafka message using the producer's Kafka client and a delivery channel.
 // The message is produced to the Kafka topic specified in the message, and the delivery
 // channel is used to receive delivery reports.
-func (p *Producer) Produce(msg *kafka.Message) error {
-	return p.kafkaClient.Produce(msg, p.deliveryCh)
+func (p *Producer) Produce(msg *kafka.Message, opts ...ProduceOption) error {
+	options := NewProduceOptions()
+	for _, option := range opts {
+		if err := option(options); err != nil {
+			return err
+		}
+	}
+
+	if !options.WaitForDelivery {
+		return p.kafkaClient.Produce(msg, p.deliveryCh)
+	}
+
+	return p.produceAndWait(msg, options)
+}
+
+func (p *Producer) produceAndWait(msg *kafka.Message, options *ProduceOptions) error {
+	// Use a per-message delivery channel so concurrent producers do not race on shared reports.
+	deliveryCh := make(chan kafka.Event, 1)
+	if err := p.kafkaClient.Produce(msg, deliveryCh); err != nil {
+		return err
+	}
+
+	select {
+	case event := <-deliveryCh:
+		deliveryReport, ok := event.(*kafka.Message)
+		if !ok {
+			return fmt.Errorf("%w: unexpected delivery event type %T", errors.ErrDeliveryMsg, event)
+		}
+		if deliveryReport.TopicPartition.Error != nil {
+			return fmt.Errorf("%w: %s", errors.ErrDeliveryMsg, deliveryReport.TopicPartition.Error)
+		}
+
+		// Preserve observability for existing callers listening on the shared delivery channel.
+		if p.deliveryCh != nil {
+			select {
+			case p.deliveryCh <- deliveryReport:
+			default:
+			}
+		}
+		return nil
+	case <-time.After(options.WaitForDeliveryTimeout):
+		return fmt.Errorf("%w: timed out waiting for delivery report", errors.ErrDeliveryMsg)
+	}
 }
 
 // Close gracefully shuts down the producer, ensuring all outstanding messages are delivered.
