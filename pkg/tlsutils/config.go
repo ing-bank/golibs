@@ -103,6 +103,12 @@ func (c *Config) UseTLS() bool {
 	if c == nil {
 		return false
 	}
+	if c.MinVersion != "" {
+		return true
+	}
+	if len(c.RootCAs) > 0 {
+		return true
+	}
 	if c.Cert != "" && c.Key != "" {
 		return !c.Disabled
 	}

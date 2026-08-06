@@ -127,7 +127,7 @@ func NewForConfig(c *Config, opts ...ClientOption) (*Client, error) {
 	var tlsconfig *tls.Config
 	var err error
 
-	if c.TLS.UseTLS() {
+	if c.TLS.UseTLS() || c.TLS.InsecureSkipVerify {
 		tlsconfig, err = tlsclient.NewForConfig(&c.TLS)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS config for health check: %w", err)
