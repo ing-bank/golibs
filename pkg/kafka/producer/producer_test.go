@@ -2,12 +2,15 @@ package producer
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
 	confluentinckafka "github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
+	kafkaerrors "github.com/ing-bank/golibs/pkg/kafka/errors"
 	"github.com/ing-bank/golibs/pkg/kafka/stats"
 )
 
@@ -125,6 +128,74 @@ func TestParseProduceOptions_DefaultsAndTimeout(t *testing.T) {
 	if options.WaitForDeliveryTimeout != 1234*time.Millisecond {
 		t.Fatalf("unexpected overridden wait timeout: got %s", options.WaitForDeliveryTimeout)
 	}
+}
+
+func TestProducer_WaitForDeliveryTimeout_DoesNotLeakCgoRefs(t *testing.T) {
+	t.Parallel()
+
+	cluster := SetupMockCluster(t)
+	client := MockProducer(t, cluster)
+
+	before := memSnapshot(true)
+	peak := before
+
+	const attempts = 10000
+	timeoutErrors := 0
+
+	for i := range attempts {
+		msg := NewMessage([]byte("timeout-no-leak"), "topic-timeout-no-leak")
+		err := client.Produce(msg,
+			WithWaitForDelivery(true),
+			WithWaitForDeliveryTimeout(1*time.Nanosecond),
+		)
+		if err != nil {
+			if !errors.Is(err, kafkaerrors.ErrDeliveryMsg) {
+				t.Fatalf("expected ErrDeliveryMsg on timeout path, got: %v", err)
+			}
+			timeoutErrors++
+		}
+
+		if i%10 == 0 {
+			current := memSnapshot(false)
+			if current.HeapAlloc > peak.HeapAlloc {
+				peak = current
+			}
+		}
+	}
+
+	if timeoutErrors == 0 {
+		t.Fatal("expected at least one timed-out produce call")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		currentMapLen := cgoMapLen(client)
+		if currentMapLen == 0 {
+			after := memSnapshot(true)
+			t.Logf("memory snapshot bytes (heap alloc): before=%d peak=%d after=%d", before.HeapAlloc, peak.HeapAlloc, after.HeapAlloc)
+			t.Logf("memory snapshot (heap objects): before=%d peak=%d after=%d", before.HeapObjects, peak.HeapObjects, after.HeapObjects)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+		t.Logf("waiting for confluent producer cgo map to drain to zero, current len=%d", currentMapLen)
+	}
+
+	t.Fatalf("expected confluent producer cgo map to drain to zero, got len=%d", cgoMapLen(client))
+}
+
+func memSnapshot(runGC bool) runtime.MemStats {
+	if runGC {
+		runtime.GC()
+	}
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	return ms
+}
+
+func cgoMapLen(client *Producer) int {
+	producerValue := reflect.ValueOf(client.kafkaClient).Elem()
+	handleValue := producerValue.FieldByName("handle")
+	return handleValue.FieldByName("cgomap").Len()
 }
 
 func MockProducer(t *testing.T, cluster *confluentinckafka.MockCluster) *Producer {
