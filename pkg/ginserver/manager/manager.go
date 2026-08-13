@@ -40,6 +40,8 @@ type Manager struct {
 	Webserver       *ginserver.Engine
 	Sidecar         *ginserver.Engine
 	Proxy           *ginserver.Engine
+	proxyOptions    []ginserver.Option
+	proxyInitialized bool
 	shutdownTimeout time.Duration
 }
 
@@ -122,17 +124,10 @@ func NewManager(c *Config, opts ...Option) (*Manager, error) {
 		return nil, fmt.Errorf("failed to create HTTP server: %w", err)
 	}
 
-	proxyConfig := *c // shallow copy
-	proxycar, err := newProxyCar(proxyConfig, &webserverConfig)
-	if err != nil {
-		return nil, err
-	}
-
 	m := &Manager{
 		Webserver:       webserver,
 		Sidecar:         sidecar,
 		shutdownTimeout: webserverConfig.HTTPServer.ShutdownTimeout.Duration,
-		Proxy:           proxycar,
 	}
 
 	// apply options to gin engine
@@ -140,10 +135,18 @@ func NewManager(c *Config, opts ...Option) (*Manager, error) {
 		return nil, fmt.Errorf("failed to apply Engine option: %w", err)
 	}
 
+	proxyConfig := *c // shallow copy
+	proxycar, err := newProxyCar(proxyConfig, &webserverConfig, m.proxyOptions...)
+	if err != nil {
+		return nil, err
+	}
+	m.Proxy = proxycar
+	m.proxyInitialized = true
+
 	return m, nil
 }
 
-func newProxyCar(proxyConfig Config, mainConfig *Config) (*ginserver.Engine, error) {
+func newProxyCar(proxyConfig Config, mainConfig *Config, opts ...ginserver.Option) (*ginserver.Engine, error) {
 	if mainConfig.ProxyConfig.Enabled && len(mainConfig.ProxyConfig.Config.Routes) > 0 {
 		// apply default values to the configuration
 		if err := ApplyProxyDefaults(&proxyConfig); err != nil {
@@ -157,7 +160,8 @@ func newProxyCar(proxyConfig Config, mainConfig *Config) (*ginserver.Engine, err
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy client: %w", err)
 		}
-		proxycar, err := ginserver.NewForConfig(&proxyConfig.Config, ginserver.WithRoutes(proxyclient))
+		engineOptions := append(opts, ginserver.WithRoutes(proxyclient))
+		proxycar, err := ginserver.NewForConfig(&proxyConfig.Config, engineOptions...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy server: %w", err)
 		}

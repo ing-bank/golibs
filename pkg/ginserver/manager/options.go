@@ -1,6 +1,8 @@
 package manager
 
 import (
+	"fmt"
+
 	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/ginserver"
 )
@@ -21,6 +23,13 @@ func WithSidecarOptions(opts ...config.Option[*ginserver.Engine]) config.Opt[*Ma
 
 func WithProxycarOptions(opts ...config.Option[*ginserver.Engine]) config.Opt[*Manager] {
 	return func(m *Manager) error {
-		return m.Proxy.With(opts...)
+		if m.Proxy != nil {
+			return m.Proxy.With(opts...)
+		}
+		if m.proxyInitialized {
+			return fmt.Errorf("proxycar is not enabled")
+		}
+		m.proxyOptions = append(m.proxyOptions, opts...)
+		return nil
 	}
 }
