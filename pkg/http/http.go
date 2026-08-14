@@ -107,6 +107,11 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 	return client, nil
 }
 
+// TODO use ClientConfig Option etc
+//func NewClientForConfig(cfg Config) (*Client, error) {
+//
+//}
+
 func NewForConfig(c *Config, opts ...ClientOption) (*Client, error) {
 	cfg := *c // shallow copy
 

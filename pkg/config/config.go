@@ -187,18 +187,19 @@ func DefaultConfig[T any, PT interface {
 	}
 }
 
-func NewOrDie[T, C any](build func(...Option[C]) (*T, error), opts ...Option[C]) *T {
-	client, err := build(opts...)
-	if err != nil {
-		panic(err)
-	}
-	return client
-}
-
-func NewForConfigOrDie[T, C any](build func(C) (*T, error), cfg C) *T {
-	client, err := build(cfg)
-	if err != nil {
-		panic(err)
-	}
-	return client
-}
+//
+//func NewOrDie[T, C any](build func(...Option[C]) (*T, error), opts ...Option[C]) *T {
+//	client, err := build(opts...)
+//	if err != nil {
+//		panic(err)
+//	}
+//	return client
+//}
+//
+//func NewForConfigOrDie[T, C any](build func(C) (*T, error), cfg C) *T {
+//	client, err := build(cfg)
+//	if err != nil {
+//		panic(err)
+//	}
+//	return client
+//}

@@ -5,35 +5,28 @@ import "github.com/ing-bank/golibs/pkg/config"
 type Option = config.Option[*Config]
 
 type Config struct {
-	Breaker     *BreakerConfig     `yaml:"breaker" json:"breaker"`
-	Logging     *LoggingOptions    `yaml:"logging" json:"logging"`
-	Metrics     *MetricsConfig     `yaml:"metrics" json:"metrics"`
-	RateLimiter *RateLimitSettings `yaml:"rateLimiter" json:"rateLimiter"`
-	Retrier     *RetrierConfig     `yaml:"retrier" json:"retrier"`
-}
-
-func WithDefaultConfig[T any](provided *T, def T) T {
-	if provided == nil {
-		return def
-	}
-	return *provided
+	Breaker     *CircuitBreakerConfig `yaml:"breaker" json:"breaker"`
+	Logging     *LoggingConfig        `yaml:"logging" json:"logging"`
+	Metrics     *MetricsConfig        `yaml:"metrics" json:"metrics"`
+	RateLimiter *RateLimiterConfig    `yaml:"rateLimiter" json:"rateLimiter"`
+	Retrier     *RetrierConfig        `yaml:"retrier" json:"retrier"`
 }
 
 func (c *Config) ApplyDefaults() {
 	if c.Breaker == nil {
-		c.Breaker = &BreakerConfig{}
+		c.Breaker = &CircuitBreakerConfig{Enabled: true}
 	}
 	if c.Logging == nil {
-		c.Logging = &LoggingOptions{}
+		c.Logging = &LoggingConfig{}
 	}
 	if c.Metrics == nil {
-		c.Metrics = &MetricsConfig{}
+		c.Metrics = &MetricsConfig{Enabled: true}
 	}
 	if c.RateLimiter == nil {
-		c.RateLimiter = &RateLimitSettings{}
+		c.RateLimiter = &RateLimiterConfig{Enabled: true}
 	}
 	if c.Retrier == nil {
-		c.Retrier = DefaultRetrierConfig()
+		c.Retrier = &RetrierConfig{Enabled: true}
 	}
 }
 
@@ -46,7 +39,18 @@ func NewForConfig(cfg Config) (Tripperware, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	logger, err := NewLoggingForConfig(*cfg.Logging)
+	if err != nil {
+		return nil, err
+	}
+	breaker, err := NewBreakerForConfig(*cfg.Breaker)
+	if err != nil {
+		return nil, err
+	}
+	limiter, err := NewRateLimiterForConfig(*cfg.RateLimiter)
+	if err != nil {
+		return nil, err
+	}
 	metrics, err := NewMetricsForConfig(*cfg.Metrics)
 	if err != nil {
 		return nil, err
@@ -54,9 +58,9 @@ func NewForConfig(cfg Config) (Tripperware, error) {
 
 	return Chain(
 		retrier.Tripperware(),
-		Logging(WithDefaultConfig(cfg.Logging, LoggingOptions{Enabled: true})),
-		NewBreakerForConfig(WithDefaultConfig(cfg.Breaker, BreakerConfig{Enabled: true})).Tripperware(),
-		NewRateLimiterForConfig(WithDefaultConfig(cfg.RateLimiter, RateLimitSettings{Enabled: true})).Tripperware(),
+		logger,
+		breaker.Tripperware(),
+		limiter.Tripperware(),
 		metrics,
 	), nil
 }

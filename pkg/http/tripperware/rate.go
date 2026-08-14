@@ -7,31 +7,32 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/http/response"
 	"golang.org/x/time/rate"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type RateLimiter struct {
-	*RateLimitSettings
+	cfg *RateLimiterConfig
 
 	rateLimitLock sync.Mutex
 	rateLimitPool map[string]*rate.Limiter
 }
 
-type RateLimiterOptions func(*RateLimiter) error
+type RateLimiterOptions = config.Option[*RateLimiterConfig]
 
-type RateLimitSettings struct {
+type RateLimiterConfig struct {
 	Enabled   bool `yaml:"enabled" json:"enabled"`
 	Endpoints map[string]struct {
 		Interval metav1.Duration `yaml:"interval" json:"interval"`
 		Burst    int             `yaml:"burst" json:"burst"`
-	}
+	} `yaml:"endpoints" json:"endpoints"`
 	DefaultInterval metav1.Duration `yaml:"defaultInterval" json:"defaultInterval"`
 	DefaultBurst    int             `yaml:"defaultBurst" json:"defaultBurst"`
 }
 
-func (r *RateLimitSettings) ApplyDefaults() {
+func (r *RateLimiterConfig) ApplyDefaults() {
 	if r.DefaultInterval.Duration == 0 {
 		r.DefaultInterval = metav1.Duration{Duration: 50 * time.Millisecond}
 	}
@@ -40,32 +41,27 @@ func (r *RateLimitSettings) ApplyDefaults() {
 	}
 }
 
-func NewRateLimiterForConfig(cfg RateLimitSettings) *RateLimiter {
-	cfg.ApplyDefaults()
+func NewRateLimiterForConfig(cfg RateLimiterConfig) (*RateLimiter, error) {
+	if err := config.Configure(&cfg); err != nil {
+		return nil, err
+	}
 	return &RateLimiter{
-		RateLimitSettings: &cfg,
-		rateLimitLock:     sync.Mutex{},
-		rateLimitPool:     make(map[string]*rate.Limiter),
-	}
+		cfg:           &cfg,
+		rateLimitLock: sync.Mutex{},
+		rateLimitPool: make(map[string]*rate.Limiter),
+	}, nil
 }
 
-func NewRateLimiter(opts ...RateLimiterOptions) *RateLimiter {
-	rateLimit := NewRateLimiterForConfig(RateLimitSettings{Enabled: true})
-	for _, opt := range opts {
-		_ = opt(rateLimit)
+func NewRateLimiter(opts ...RateLimiterOptions) (*RateLimiter, error) {
+	cfg, err := config.New[RateLimiterConfig](opts...)
+	if err != nil {
+		return nil, err
 	}
-	return rateLimit
-}
-
-func WithRateLimitSettings(settings *RateLimitSettings) RateLimiterOptions {
-	return func(r *RateLimiter) error {
-		r.RateLimitSettings = settings
-		return nil
-	}
+	return NewRateLimiterForConfig(*cfg)
 }
 
 func (r *RateLimiter) Tripperware() Tripperware {
-	if !r.Enabled {
+	if !r.cfg.Enabled {
 		return EmptyTripperware()
 	}
 	return func(next Endpoint) Endpoint {
@@ -96,10 +92,10 @@ func (r *RateLimiter) GetRateLimitWithSettings(name string) *rate.Limiter {
 		return limiter
 	}
 
-	endpointDefault, ok := r.Endpoints[name]
+	endpointDefault, ok := r.cfg.Endpoints[name]
 	if !ok {
-		endpointDefault.Burst = r.DefaultBurst
-		endpointDefault.Interval = r.DefaultInterval
+		endpointDefault.Burst = r.cfg.DefaultBurst
+		endpointDefault.Interval = r.cfg.DefaultInterval
 	}
 
 	limiter = rate.NewLimiter(rate.Every(endpointDefault.Interval.Duration), endpointDefault.Burst)

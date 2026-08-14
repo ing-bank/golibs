@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/http/response"
 	"github.com/ing-bank/golibs/pkg/opt"
 	"github.com/ing-bank/golibs/pkg/slices"
@@ -18,7 +19,9 @@ import (
 
 var defaultSkipPaths = []string{"/metrics", "/healthz", "/readyz", "/swagger"}
 
-type LoggingOptions struct {
+type LoggingOption = config.Option[*LoggingConfig]
+
+type LoggingConfig struct {
 	Enabled                 bool     `yaml:"enabled" json:"enabled,omitempty"`
 	DisabledRequestLogger   bool     `yaml:"disabledRequestLogger" json:"disabledRequestLogger,omitempty"`     // Default false
 	DisabledResponseLogger  bool     `yaml:"disabledResponseLogger" json:"disabledResponseLogger,omitempty"`   // Default false
@@ -28,7 +31,7 @@ type LoggingOptions struct {
 	SkipPaths               []string `yaml:"skipPaths" json:"skipPaths,omitempty"`                             // Default defaultSkipPaths
 }
 
-func (opts *LoggingOptions) SetDefaults() {
+func (opts *LoggingConfig) SetDefaults() {
 	if opts.RequestCutoffThreshold == 0 {
 		opts.RequestCutoffThreshold = 10240
 	}
@@ -40,11 +43,30 @@ func (opts *LoggingOptions) SetDefaults() {
 	}
 }
 
-func Logging(options ...LoggingOptions) Tripperware {
-	opts := opt.Opt(LoggingOptions{}, options) // Keep same function signature as before
-	opts.SetDefaults()
+func NewLoggingForConfig(cfg LoggingConfig) (Tripperware, error) {
+	if err := config.Configure(&cfg); err != nil {
+		return nil, err
+	}
+	return loggingTripperware(&cfg), nil
+}
 
-	if !opts.Enabled {
+func NewLogging(options ...LoggingOption) (Tripperware, error) {
+	cfg, err := config.New[LoggingConfig](options...)
+	if err != nil {
+		return nil, err
+	}
+	return NewLoggingForConfig(*cfg)
+}
+
+// Deprecated: use NewLogging instead
+func Logging(opts ...LoggingConfig) Tripperware {
+	cfg := opt.Opt(LoggingConfig{Enabled: true}, opts)
+	trip, _ := NewLoggingForConfig(cfg)
+	return trip
+}
+
+func loggingTripperware(cfg *LoggingConfig) Tripperware {
+	if !cfg.Enabled {
 		return EmptyTripperware()
 	}
 
@@ -57,21 +79,21 @@ func Logging(options ...LoggingOptions) Tripperware {
 			method := request.Method
 			url := request.URL
 
-			if slices.Contains(opts.SkipPaths, url.Path) {
+			if slices.Contains(cfg.SkipPaths, url.Path) {
 				// Do not print health calls
 				return next(ctx, request)
 			}
 
 			// Log request
-			if !opts.DisabledRequestLogger {
-				log.WithContext(ctx).Infof("[HttpClient] Executing %s %s with request: %s", method, url, readRequest(request, opts.RequestCutoffThreshold))
+			if !cfg.DisabledRequestLogger {
+				log.WithContext(ctx).Infof("[HttpClient] Executing %s %s with request: %s", method, url, readRequest(request, cfg.RequestCutoffThreshold))
 			}
 
 			// Call next tripperware
 			resp := next(ctx, request)
 			if err := resp.Error(); err != nil {
-				if opts.LogFailedRequests {
-					log.WithContext(ctx).Errorf("[HttpClient] Error executing %s %s with request: %s, status: %d, error: %v", method, url, readRequest(request, opts.RequestCutoffThreshold), resp.Status, err)
+				if cfg.LogFailedRequests {
+					log.WithContext(ctx).Errorf("[HttpClient] Error executing %s %s with request: %s, status: %d, error: %v", method, url, readRequest(request, cfg.RequestCutoffThreshold), resp.Status, err)
 				}
 
 				if ver, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
@@ -83,8 +105,8 @@ func Logging(options ...LoggingOptions) Tripperware {
 				}
 
 				// although there was an error, we may have a response to log
-				if !opts.DisabledResponseLogger {
-					log.WithContext(ctx).Errorf("[HttpClient] %s %s had status: %d, error: %v, response: %s", method, url, resp.Status, err, readResponse(resp, opts.ResponseCutoffThreshold))
+				if !cfg.DisabledResponseLogger {
+					log.WithContext(ctx).Errorf("[HttpClient] %s %s had status: %d, error: %v, response: %s", method, url, resp.Status, err, readResponse(resp, cfg.ResponseCutoffThreshold))
 				} else {
 					log.WithContext(ctx).Errorf("[HttpClient] %s %s had status %d, error: %v", method, url, resp.Status, err)
 				}
@@ -94,8 +116,8 @@ func Logging(options ...LoggingOptions) Tripperware {
 			}
 
 			// Log response
-			if !opts.DisabledResponseLogger {
-				log.WithContext(ctx).Infof("[HttpClient] %s %s had status: %d, response: %s", method, url, resp.Status, readResponse(resp, opts.ResponseCutoffThreshold))
+			if !cfg.DisabledResponseLogger {
+				log.WithContext(ctx).Infof("[HttpClient] %s %s had status: %d, response: %s", method, url, resp.Status, readResponse(resp, cfg.ResponseCutoffThreshold))
 			} else {
 				log.WithContext(ctx).Infof("[HttpClient] %s %s had status %d", method, url, resp.Status)
 			}

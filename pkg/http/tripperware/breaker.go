@@ -7,63 +7,65 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/http/response"
 	"github.com/sony/gobreaker"
 )
 
 type Breaker struct {
-	cfg *BreakerConfig
-	*CircuitBreakerSettings
+	cfg *CircuitBreakerConfig
 
 	breakerPoolLock sync.Mutex
 	breakerPool     map[string]*gobreaker.CircuitBreaker
 }
 
-type BreakerConfig struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
+type CircuitBreakerConfig struct {
+	Enabled   bool                `yaml:"enabled" json:"enabled"`
+	GoBreaker *gobreaker.Settings `yaml:"-" json:"-"`
 }
 
-type CircuitBreakerOptions func(*Breaker) error
-
-type CircuitBreakerSettings struct {
-	BreakerPool string // TODO: broken by middleware implementation? Overriden by host var
-	GoBreaker   gobreaker.Settings
-}
-
-func NewBreakerForConfig(cfg BreakerConfig) *Breaker {
-	return &Breaker{
-		cfg: &cfg,
-		CircuitBreakerSettings: &CircuitBreakerSettings{
-			GoBreaker: gobreaker.Settings{
-				// Name:        "",
-				MaxRequests: 100,
-				Interval:    time.Minute,
-				Timeout:     time.Second,
-				ReadyToTrip: func(counts gobreaker.Counts) bool {
-					return counts.ConsecutiveFailures >= 10
-				},
-				OnStateChange: func(string, gobreaker.State, gobreaker.State) {},
-				IsSuccessful: func(err error) bool {
-					return err == nil
-				},
+func (c *CircuitBreakerConfig) ApplyDefaults() {
+	if c.GoBreaker == nil {
+		c.GoBreaker = &gobreaker.Settings{
+			MaxRequests: 100,
+			Interval:    time.Minute,
+			Timeout:     time.Second,
+			ReadyToTrip: func(counts gobreaker.Counts) bool {
+				return counts.ConsecutiveFailures >= 10
 			},
-		},
+			OnStateChange: func(string, gobreaker.State, gobreaker.State) {},
+			IsSuccessful: func(err error) bool {
+				return err == nil
+			},
+		}
+	}
+}
+
+type CircuitBreakerOptions = config.Option[*CircuitBreakerConfig]
+
+func NewBreakerForConfig(cfg CircuitBreakerConfig) (*Breaker, error) {
+	if err := config.Configure(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &Breaker{
+		cfg:             &cfg,
 		breakerPoolLock: sync.Mutex{},
 		breakerPool:     make(map[string]*gobreaker.CircuitBreaker),
-	}
+	}, nil
 }
 
-func NewBreaker(opts ...CircuitBreakerOptions) *Breaker {
-	breaker := NewBreakerForConfig(BreakerConfig{Enabled: true})
-	for _, opt := range opts {
-		_ = opt(breaker)
+func NewBreaker(opts ...CircuitBreakerOptions) (*Breaker, error) {
+	cfg, err := config.New[CircuitBreakerConfig](opts...)
+	if err != nil {
+		return nil, err
 	}
-	return breaker
+	return NewBreakerForConfig(*cfg)
 }
 
-func WithCircuitBreakerSettings(settings *CircuitBreakerSettings) CircuitBreakerOptions {
-	return func(b *Breaker) error {
-		b.CircuitBreakerSettings = settings
+func WithCircuitBreakerSettings(settings *gobreaker.Settings) CircuitBreakerOptions {
+	return func(b *CircuitBreakerConfig) error {
+		b.GoBreaker = settings
 		return nil
 	}
 }
@@ -80,12 +82,8 @@ func (b *Breaker) Tripperware() Tripperware {
 			if err != nil {
 				return &response.Data{Err: err}
 			}
-			// override breaker name with host var
-			b.breakerPoolLock.Lock()
-			b.BreakerPool = u.Host
-			b.breakerPoolLock.Unlock()
 
-			breaker := b.GetBreakerWithSettings()
+			breaker := b.GetGoBreaker(u.Host)
 			//counter := breaker.Counts()
 
 			//tripperware.PromBreakerRequestCounter.WithLabelValues(b.BreakerPool, breaker.State().String()).Set(float64(counter.Requests + 1)) // add one, because the breaker.Counts() is executed before the main loop
@@ -99,14 +97,14 @@ func (b *Breaker) Tripperware() Tripperware {
 	}
 }
 
-func (b *Breaker) GetBreakerWithSettings() *gobreaker.CircuitBreaker {
+func (b *Breaker) GetGoBreaker(name string) *gobreaker.CircuitBreaker {
 	b.breakerPoolLock.Lock()
 	defer b.breakerPoolLock.Unlock()
 
-	breaker, ok := b.breakerPool[b.BreakerPool]
+	breaker, ok := b.breakerPool[name]
 	if !ok {
-		breaker = gobreaker.NewCircuitBreaker(b.GoBreaker)
-		b.breakerPool[b.BreakerPool] = breaker
+		breaker = gobreaker.NewCircuitBreaker(*b.cfg.GoBreaker)
+		b.breakerPool[name] = breaker
 	}
 
 	return breaker

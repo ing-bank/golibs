@@ -20,8 +20,15 @@ var promLabels = []string{"method", "host"} // "path"
 type MetricsOption = config.Option[*MetricsConfig]
 
 type MetricsConfig struct {
-	Disabled               bool `yaml:"disabled" json:"disabled"`
+	Enabled                bool `yaml:"enabled" json:"enabled"`
 	LogTransportTimesOnErr bool `yaml:"logTransportTimesOnErr" json:"logTransportTimesOnErr"`
+}
+
+func WithMetricsEnabled(enabled bool) MetricsOption {
+	return func(cfg *MetricsConfig) error {
+		cfg.Enabled = enabled
+		return nil
+	}
 }
 
 func WithLogTransportTimesOnErr(log bool) MetricsOption {
@@ -49,7 +56,7 @@ func NewMetrics(opts ...MetricsOption) (Tripperware, error) {
 
 func metricsTripperware(cfg MetricsConfig) Tripperware {
 	// TODO: wrap metrics in a nice struct
-	if cfg.Disabled {
+	if !cfg.Enabled {
 		return EmptyTripperware()
 	}
 	return func(next Endpoint) Endpoint {
@@ -77,7 +84,10 @@ func metricsTripperware(cfg MetricsConfig) Tripperware {
 // Metrics returns a Tripperware that collects metrics for HTTP requests and responses using Prometheus.
 // Deprecated: Use NewMetricsForConfig or NewMetrics instead.
 func Metrics(LogTransportTimesOnErr bool) Tripperware {
-	trip, _ := NewMetrics(WithLogTransportTimesOnErr(LogTransportTimesOnErr))
+	trip, _ := NewMetrics(
+		WithMetricsEnabled(true),
+		WithLogTransportTimesOnErr(LogTransportTimesOnErr),
+	)
 	return trip
 }
 
