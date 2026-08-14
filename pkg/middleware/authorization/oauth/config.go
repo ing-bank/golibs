@@ -75,7 +75,7 @@ func (c *Config) ApplyDefaults() {
 type Option = config.Option[*Provider]
 
 // WithProvider sets the OAuth provider
-func WithProvider(p *Provider) config.Opt[*Provider] {
+func WithProvider(p *Provider) config.Option[*Provider] {
 	return func(s *Provider) error {
 		if p == nil {
 			return fmt.Errorf("oauth Provider cannot be nil")
@@ -86,7 +86,7 @@ func WithProvider(p *Provider) config.Opt[*Provider] {
 }
 
 // WithResponse sets the response handler for authentication failures
-func WithResponse(handler Response) config.Opt[*Provider] {
+func WithResponse(handler Response) config.Option[*Provider] {
 	return func(s *Provider) error {
 		s.response = handler
 		return nil
@@ -94,7 +94,7 @@ func WithResponse(handler Response) config.Opt[*Provider] {
 }
 
 // WithAuthenticationOptions sets the authentication options for the OpenShift provider
-func WithAuthenticationOptions(opts openshift.DelegatingAuthenticationOptions) config.Opt[*Provider] {
+func WithAuthenticationOptions(opts openshift.DelegatingAuthenticationOptions) config.Option[*Provider] {
 	return func(s *Provider) error {
 		if s.Provider == nil {
 			return ErrProviderNotInitialized
@@ -107,7 +107,7 @@ func WithAuthenticationOptions(opts openshift.DelegatingAuthenticationOptions) c
 }
 
 // WithAuthorizationOptions sets the authorization options for the OpenShift provider
-func WithAuthorizationOptions(opts openshift.DelegatingAuthorizationOptions) config.Opt[*Provider] {
+func WithAuthorizationOptions(opts openshift.DelegatingAuthorizationOptions) config.Option[*Provider] {
 	return func(s *Provider) error {
 		if s.Provider == nil {
 			return ErrProviderNotInitialized
@@ -121,7 +121,7 @@ func WithAuthorizationOptions(opts openshift.DelegatingAuthorizationOptions) con
 }
 
 // WithKubeClientOptions sets the Kubernetes client options for the OpenShift provider
-func WithKubeClientOptions(opts openshift.KubeClientOptions) config.Opt[*Provider] {
+func WithKubeClientOptions(opts openshift.KubeClientOptions) config.Option[*Provider] {
 	return func(s *Provider) error {
 		if s.Provider == nil {
 			return ErrProviderNotInitialized
@@ -135,7 +135,7 @@ func WithKubeClientOptions(opts openshift.KubeClientOptions) config.Opt[*Provide
 }
 
 // WithKubeConfig sets the kubeconfig file for the OpenShift provider
-func WithKubeConfig(kubeconfig string) config.Opt[*Provider] {
+func WithKubeConfig(kubeconfig string) config.Option[*Provider] {
 	return func(s *Provider) error {
 		if s.Provider == nil {
 			return ErrProviderNotInitialized
@@ -145,7 +145,7 @@ func WithKubeConfig(kubeconfig string) config.Opt[*Provider] {
 }
 
 // WithClientCertAuthenticationOptions sets the client certificate authentication options for the OpenShift provider
-func WithClientCertAuthenticationOptions(clientCA string) config.Opt[*Provider] {
+func WithClientCertAuthenticationOptions(clientCA string) config.Option[*Provider] {
 	return func(s *Provider) error {
 		if s.Provider == nil {
 			return ErrProviderNotInitialized
@@ -159,7 +159,7 @@ func WithClientCertAuthenticationOptions(clientCA string) config.Opt[*Provider] 
 }
 
 // WithCacheTTL sets the cache TTL for both authentication and authorization in the OpenShift provider
-func WithCacheTTL(t time.Duration) config.Opt[*Provider] {
+func WithCacheTTL(t time.Duration) config.Option[*Provider] {
 	return func(s *Provider) error {
 		if s.Provider == nil {
 			return ErrProviderNotInitialized

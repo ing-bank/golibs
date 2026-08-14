@@ -6,6 +6,35 @@ import (
 	"testing"
 )
 
+type configurableWithPointerMethods struct {
+	defaultsApplied bool
+	prepared        bool
+	validated       bool
+}
+
+type onlyValidatable struct {
+	validated bool
+}
+
+func (c *configurableWithPointerMethods) ApplyDefaults() {
+	c.defaultsApplied = true
+}
+
+func (c *configurableWithPointerMethods) Prepare() error {
+	c.prepared = true
+	return nil
+}
+
+func (c *configurableWithPointerMethods) Validate() error {
+	c.validated = true
+	return nil
+}
+
+func (c *onlyValidatable) Validate() error {
+	c.validated = true
+	return nil
+}
+
 type ConfigWithDefaults struct {
 	Port    int `json:"port"`
 	Timeout int `json:"timeout"`
@@ -128,5 +157,61 @@ func TestLoadType(t *testing.T) {
 
 	if err := cfg.Validate(); err != nil {
 		t.Error(err.Error())
+	}
+}
+
+func TestConfigureWithPointer(t *testing.T) {
+	cfg := &configurableWithPointerMethods{}
+
+	if err := Configure(cfg); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	if !cfg.defaultsApplied {
+		t.Fatal("expected ApplyDefaults to be called")
+	}
+
+	if !cfg.prepared {
+		t.Fatal("expected Prepare to be called")
+	}
+
+	if cfg.validated {
+		t.Fatal("did not expect Validate to be called when Prepare is implemented")
+	}
+}
+
+func TestConfigureFallsBackToValidate(t *testing.T) {
+
+	cfg := &onlyValidatable{}
+	if err := Configure(cfg); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
+
+	if !cfg.validated {
+		t.Fatal("expected Validate to be called")
+	}
+}
+
+func TestConfigureWithoutInterfaces(t *testing.T) {
+	type plainConfig struct{}
+
+	if err := Configure(&plainConfig{}); err != nil {
+		t.Fatalf("expected nil error for plain config, got: %v", err)
+	}
+}
+
+func TestDefaultConfigAllocatesAndAppliesDefaults(t *testing.T) {
+	defaultConfig := DefaultConfig[ConfigWithDefaults]()
+	cfg := defaultConfig()
+
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+
+	if cfg.Port != 8080 {
+		t.Errorf("Port = %d, want 8080", cfg.Port)
+	}
+	if cfg.Timeout != 30 {
+		t.Errorf("Timeout = %d, want 30", cfg.Timeout)
 	}
 }

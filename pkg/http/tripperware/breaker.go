@@ -12,10 +12,15 @@ import (
 )
 
 type Breaker struct {
+	cfg *BreakerConfig
 	*CircuitBreakerSettings
 
 	breakerPoolLock sync.Mutex
 	breakerPool     map[string]*gobreaker.CircuitBreaker
+}
+
+type BreakerConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 type CircuitBreakerOptions func(*Breaker) error
@@ -25,8 +30,9 @@ type CircuitBreakerSettings struct {
 	GoBreaker   gobreaker.Settings
 }
 
-func NewBreaker(opts ...CircuitBreakerOptions) *Breaker {
-	breaker := &Breaker{
+func NewBreakerForConfig(cfg BreakerConfig) *Breaker {
+	return &Breaker{
+		cfg: &cfg,
 		CircuitBreakerSettings: &CircuitBreakerSettings{
 			GoBreaker: gobreaker.Settings{
 				// Name:        "",
@@ -45,13 +51,14 @@ func NewBreaker(opts ...CircuitBreakerOptions) *Breaker {
 		breakerPoolLock: sync.Mutex{},
 		breakerPool:     make(map[string]*gobreaker.CircuitBreaker),
 	}
+}
 
+func NewBreaker(opts ...CircuitBreakerOptions) *Breaker {
+	breaker := NewBreakerForConfig(BreakerConfig{Enabled: true})
 	for _, opt := range opts {
 		_ = opt(breaker)
 	}
-
 	return breaker
-
 }
 
 func WithCircuitBreakerSettings(settings *CircuitBreakerSettings) CircuitBreakerOptions {
@@ -62,6 +69,9 @@ func WithCircuitBreakerSettings(settings *CircuitBreakerSettings) CircuitBreaker
 }
 
 func (b *Breaker) Tripperware() Tripperware {
+	if !b.cfg.Enabled {
+		return EmptyTripperware()
+	}
 	return func(next Endpoint) Endpoint {
 		return func(ctx context.Context, request *http.Request) *response.Data {
 			//logger := log.WithContext(ctx).WithField("func", utils.GetFuncName())

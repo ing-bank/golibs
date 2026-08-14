@@ -7,6 +7,7 @@ import (
 	"net/http/httptrace"
 	"time"
 
+	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/http/response"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -16,7 +17,41 @@ import (
 var promLabels = []string{"method", "host"} // "path"
 // Metrics variables are at end of file
 
-func Metrics(logTransportTimesOnErr bool) Tripperware {
+type MetricsOption = config.Option[*MetricsConfig]
+
+type MetricsConfig struct {
+	Disabled               bool `yaml:"disabled" json:"disabled"`
+	LogTransportTimesOnErr bool `yaml:"logTransportTimesOnErr" json:"logTransportTimesOnErr"`
+}
+
+func WithLogTransportTimesOnErr(log bool) MetricsOption {
+	return func(cfg *MetricsConfig) error {
+		cfg.LogTransportTimesOnErr = log
+		return nil
+	}
+}
+
+func NewMetricsForConfig(cfg MetricsConfig) (Tripperware, error) {
+	if err := config.Configure(&cfg); err != nil {
+		return nil, err
+	}
+
+	return metricsTripperware(cfg), nil
+}
+
+func NewMetrics(opts ...MetricsOption) (Tripperware, error) {
+	cfg, err := config.New[MetricsConfig](opts...)
+	if err != nil {
+		return EmptyTripperware(), err
+	}
+	return metricsTripperware(*cfg), nil
+}
+
+func metricsTripperware(cfg MetricsConfig) Tripperware {
+	// TODO: wrap metrics in a nice struct
+	if cfg.Disabled {
+		return EmptyTripperware()
+	}
 	return func(next Endpoint) Endpoint {
 		return func(ctx context.Context, request *http.Request) *response.Data {
 			labels := prometheus.Labels{
@@ -25,7 +60,7 @@ func Metrics(logTransportTimesOnErr bool) Tripperware {
 				//"path":   fuzzURL(request.URL.String()),
 			}
 
-			trace, finish := newTrace(ctx, labels, logTransportTimesOnErr)
+			trace, finish := newTrace(ctx, labels, cfg.LogTransportTimesOnErr)
 			promRequestSizeBytes.With(labels).Observe(float64(request.ContentLength))
 			request = request.WithContext(httptrace.WithClientTrace(ctx, trace))
 
@@ -37,6 +72,13 @@ func Metrics(logTransportTimesOnErr bool) Tripperware {
 			return resp
 		}
 	}
+}
+
+// Metrics returns a Tripperware that collects metrics for HTTP requests and responses using Prometheus.
+// Deprecated: Use NewMetricsForConfig or NewMetrics instead.
+func Metrics(LogTransportTimesOnErr bool) Tripperware {
+	trip, _ := NewMetrics(WithLogTransportTimesOnErr(LogTransportTimesOnErr))
+	return trip
 }
 
 func fuzzURL(url string) string {

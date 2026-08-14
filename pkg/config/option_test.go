@@ -9,7 +9,7 @@ type Foo struct {
 	Bar string
 }
 
-func WithBar(name string) Opt[*Foo] {
+func WithBar(name string) Option[*Foo] {
 	return func(f *Foo) error {
 		f.Bar = name
 		return nil
@@ -31,7 +31,7 @@ func TestApplyOpts_WithName(t *testing.T) {
 			t.Parallel()
 			foo := &Foo{}
 			opt := WithBar(tt.input)
-			err := ApplyOpts(foo, opt)
+			err := ApplyOptions(foo, opt)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -45,19 +45,19 @@ func TestApplyOpts_WithName(t *testing.T) {
 func TestApplyOpts_NilOption(t *testing.T) {
 	t.Parallel()
 	foo := &Foo{}
-	err := ApplyOpts(foo, nil)
+	err := ApplyOptions(foo, nil)
 	if err != nil {
 		t.Errorf("expected nil error for nil option, got %v", err)
 	}
 }
 
-func TestOpt_ApplyOpt_Error(t *testing.T) {
+func TestOpt_ApplyOption_Error(t *testing.T) {
 	t.Parallel()
 	foo := &Foo{}
-	opt := Opt[*Foo](func(f *Foo) error {
+	opt := Option[*Foo](func(f *Foo) error {
 		return errors.New("fail")
 	})
-	err := opt.ApplyOpt(foo)
+	err := opt(foo)
 	if err == nil || err.Error() != "fail" {
 		t.Errorf("expected error 'fail', got %v", err)
 	}

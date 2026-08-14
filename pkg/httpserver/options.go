@@ -11,7 +11,7 @@ import (
 
 type Option = config.Option[*Server]
 
-func WithHTTPServer(server *http.Server) config.Opt[*Server] {
+func WithHTTPServer(server *http.Server) config.Option[*Server] {
 	return func(s *Server) error {
 		if server == nil {
 			return errors.New("http.Server cannot be nil")
@@ -21,7 +21,7 @@ func WithHTTPServer(server *http.Server) config.Opt[*Server] {
 	}
 }
 
-func WithShutdownTimeout(timeout time.Duration) config.Opt[*Server] {
+func WithShutdownTimeout(timeout time.Duration) config.Option[*Server] {
 	return func(server *Server) error {
 		if timeout <= 0 {
 			return errors.New("shutdownTimeout must be a positive duration")
@@ -31,7 +31,7 @@ func WithShutdownTimeout(timeout time.Duration) config.Opt[*Server] {
 	}
 }
 
-func WithHandler(handler http.Handler) config.Opt[*Server] {
+func WithHandler(handler http.Handler) config.Option[*Server] {
 	return func(s *Server) error {
 		if s.Server == nil {
 			return errors.New("http.Server is not initialized")
@@ -44,7 +44,7 @@ func WithHandler(handler http.Handler) config.Opt[*Server] {
 	}
 }
 
-func WithTLS(tlsConfig *tls.Config) config.Opt[*Server] {
+func WithTLS(tlsConfig *tls.Config) config.Option[*Server] {
 	return func(s *Server) error {
 		if s.Server == nil {
 			return errors.New("http.Server is not initialized")
@@ -57,7 +57,7 @@ func WithTLS(tlsConfig *tls.Config) config.Opt[*Server] {
 	}
 }
 
-func WithAddr(addr string) config.Opt[*Server] {
+func WithAddr(addr string) config.Option[*Server] {
 	return func(s *Server) error {
 		if s.Server == nil {
 			return errors.New("http.Server is not initialized")

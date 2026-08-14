@@ -9,6 +9,7 @@ import (
 
 	"github.com/ing-bank/golibs/pkg/http/response"
 	"golang.org/x/time/rate"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type RateLimiter struct {
@@ -21,23 +22,35 @@ type RateLimiter struct {
 type RateLimiterOptions func(*RateLimiter) error
 
 type RateLimitSettings struct {
+	Enabled   bool `yaml:"enabled" json:"enabled"`
 	Endpoints map[string]struct {
-		Interval time.Duration
-		Burst    int
+		Interval metav1.Duration `yaml:"interval" json:"interval"`
+		Burst    int             `yaml:"burst" json:"burst"`
 	}
-	DefaultInterval time.Duration
-	DefaultBurst    int
+	DefaultInterval metav1.Duration `yaml:"defaultInterval" json:"defaultInterval"`
+	DefaultBurst    int             `yaml:"defaultBurst" json:"defaultBurst"`
+}
+
+func (r *RateLimitSettings) ApplyDefaults() {
+	if r.DefaultInterval.Duration == 0 {
+		r.DefaultInterval = metav1.Duration{Duration: 50 * time.Millisecond}
+	}
+	if r.DefaultBurst == 0 {
+		r.DefaultBurst = 10
+	}
+}
+
+func NewRateLimiterForConfig(cfg RateLimitSettings) *RateLimiter {
+	cfg.ApplyDefaults()
+	return &RateLimiter{
+		RateLimitSettings: &cfg,
+		rateLimitLock:     sync.Mutex{},
+		rateLimitPool:     make(map[string]*rate.Limiter),
+	}
 }
 
 func NewRateLimiter(opts ...RateLimiterOptions) *RateLimiter {
-	rateLimit := &RateLimiter{
-		RateLimitSettings: &RateLimitSettings{
-			DefaultInterval: 50 * time.Millisecond,
-			DefaultBurst:    10,
-		},
-		rateLimitLock: sync.Mutex{},
-		rateLimitPool: make(map[string]*rate.Limiter),
-	}
+	rateLimit := NewRateLimiterForConfig(RateLimitSettings{Enabled: true})
 	for _, opt := range opts {
 		_ = opt(rateLimit)
 	}
@@ -52,6 +65,9 @@ func WithRateLimitSettings(settings *RateLimitSettings) RateLimiterOptions {
 }
 
 func (r *RateLimiter) Tripperware() Tripperware {
+	if !r.Enabled {
+		return EmptyTripperware()
+	}
 	return func(next Endpoint) Endpoint {
 		return func(ctx context.Context, request *http.Request) *response.Data {
 
@@ -86,7 +102,7 @@ func (r *RateLimiter) GetRateLimitWithSettings(name string) *rate.Limiter {
 		endpointDefault.Interval = r.DefaultInterval
 	}
 
-	limiter = rate.NewLimiter(rate.Every(endpointDefault.Interval), endpointDefault.Burst)
+	limiter = rate.NewLimiter(rate.Every(endpointDefault.Interval.Duration), endpointDefault.Burst)
 	r.rateLimitPool[name] = limiter
 
 	return limiter

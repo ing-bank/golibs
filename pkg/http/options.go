@@ -20,11 +20,11 @@ type RequestOption = config.Option[*http.Request]
 
 // With applies the provided options to the client
 func (c *Client) With(opts ...ClientOption) error {
-	return config.ApplyOpts(c, opts...)
+	return config.ApplyOptions(c, opts...)
 }
 
 // WithTripperware sets the tripperware chain to be used by the client
-func WithTripperware(chain tripperware.Tripperware) config.Opt[*Client] {
+func WithTripperware(chain tripperware.Tripperware) config.Option[*Client] {
 	return func(c *Client) error {
 		c.Tripperware = chain
 		return nil
@@ -32,7 +32,7 @@ func WithTripperware(chain tripperware.Tripperware) config.Opt[*Client] {
 }
 
 // WithTransport sets the transport to be used by the client
-func WithTransport(transport *http.Transport) config.Opt[*Client] {
+func WithTransport(transport *http.Transport) config.Option[*Client] {
 	return func(c *Client) error {
 		c.Http.Transport = transport
 		return nil
@@ -40,7 +40,7 @@ func WithTransport(transport *http.Transport) config.Opt[*Client] {
 }
 
 // WithTraceTransport wraps the provided transport with OpenTelemetry tracing
-func WithTraceTransport(transport *http.Transport) config.Opt[*Client] {
+func WithTraceTransport(transport *http.Transport) config.Option[*Client] {
 	return func(c *Client) error {
 		c.Http.Transport = otelhttp.NewTransport(transport)
 		return nil
@@ -49,7 +49,7 @@ func WithTraceTransport(transport *http.Transport) config.Opt[*Client] {
 
 // WithNewTraceTransport creates new transport with the provided TransportOptions
 // and wraps it with OpenTelemetry tracing
-func WithNewTraceTransport(options ...TransportOption) config.Opt[*Client] {
+func WithNewTraceTransport(options ...TransportOption) config.Option[*Client] {
 	return func(c *Client) error {
 		transport, err := NewTransport(options...)
 		if err != nil {
@@ -61,7 +61,7 @@ func WithNewTraceTransport(options ...TransportOption) config.Opt[*Client] {
 }
 
 // WithNewTransport creates new transport with the provided TransportOptions
-func WithNewTransport(options ...TransportOption) config.Opt[*Client] {
+func WithNewTransport(options ...TransportOption) config.Option[*Client] {
 	return func(c *Client) error {
 		transport, err := NewTransport(options...)
 		if err != nil {
@@ -72,7 +72,7 @@ func WithNewTransport(options ...TransportOption) config.Opt[*Client] {
 }
 
 // WithCheckRedirect specifies the policy for handling redirects
-func WithCheckRedirect(redirect func(req *http.Request, via []*http.Request) error) config.Opt[*Client] {
+func WithCheckRedirect(redirect func(req *http.Request, via []*http.Request) error) config.Option[*Client] {
 	return func(c *Client) error {
 		c.Http.CheckRedirect = redirect
 		return nil
@@ -80,7 +80,7 @@ func WithCheckRedirect(redirect func(req *http.Request, via []*http.Request) err
 }
 
 // WithRequestOptions sets default RequestOptions for every request the client makes
-func WithRequestOptions(opts ...RequestOption) config.Opt[*Client] {
+func WithRequestOptions(opts ...RequestOption) config.Option[*Client] {
 	return func(c *Client) error {
 		c.DefaultRequestOptions = opts
 		return nil
@@ -90,7 +90,7 @@ func WithRequestOptions(opts ...RequestOption) config.Opt[*Client] {
 // --- Request DefaultRequestOptions below, can be set as defaults for a client via WithRequestOptions ---
 
 // WithBasicAuth sets the username and password as basic authentication
-func WithBasicAuth(username, password string) config.Opt[*http.Request] {
+func WithBasicAuth(username, password string) config.Option[*http.Request] {
 	return func(request *http.Request) error {
 		request.SetBasicAuth(username, password)
 		return nil
@@ -98,7 +98,7 @@ func WithBasicAuth(username, password string) config.Opt[*http.Request] {
 }
 
 // WithBasicAuthEnv looks up the user and password in environment variables and then sets them as basic auth
-func WithBasicAuthEnv(envUser, envPass string) config.Opt[*http.Request] {
+func WithBasicAuthEnv(envUser, envPass string) config.Option[*http.Request] {
 	return func(request *http.Request) error {
 		username := os.Getenv(envUser)
 		if username == "" {
@@ -120,7 +120,7 @@ func WithBasicAuthEnv(envUser, envPass string) config.Opt[*http.Request] {
 // WithBearerAuth sets the Bearer token for authorization
 // If the token is empty, it tries to get the token from the in-cluster kubeconfig
 // or from the default kubeconfig file in the local environment
-func WithBearerAuth(token string) config.Opt[*http.Request] {
+func WithBearerAuth(token string) config.Option[*http.Request] {
 	return func(request *http.Request) error {
 		if token != "" {
 			request.Header.Set("Authorization", "Bearer "+token)
@@ -136,7 +136,7 @@ func WithBearerAuth(token string) config.Opt[*http.Request] {
 }
 
 // WithHeaders sets the HTTP headers for a request
-func WithHeaders(headers map[string]string) config.Opt[*http.Request] {
+func WithHeaders(headers map[string]string) config.Option[*http.Request] {
 	return func(request *http.Request) error {
 		for header, val := range headers {
 			request.Header.Set(header, val)
@@ -146,7 +146,7 @@ func WithHeaders(headers map[string]string) config.Opt[*http.Request] {
 }
 
 // WithAddHeaders sets the HTTP headers for a request
-func WithAddHeaders(headers map[string]string) config.Opt[*http.Request] {
+func WithAddHeaders(headers map[string]string) config.Option[*http.Request] {
 	return func(request *http.Request) error {
 		for header, val := range headers {
 			request.Header.Add(header, val)
@@ -156,7 +156,7 @@ func WithAddHeaders(headers map[string]string) config.Opt[*http.Request] {
 }
 
 // WithParams adds query parameters to the request URL
-func WithParams(params map[string]string) config.Opt[*http.Request] {
+func WithParams(params map[string]string) config.Option[*http.Request] {
 	return func(request *http.Request) error {
 		q := request.URL.Query()
 		for param, val := range params {
@@ -168,7 +168,7 @@ func WithParams(params map[string]string) config.Opt[*http.Request] {
 }
 
 // WithRawQuery sets the raw query string for the request URL
-func WithRawQuery(rawQuery string) config.Opt[*http.Request] {
+func WithRawQuery(rawQuery string) config.Option[*http.Request] {
 	return func(request *http.Request) error {
 		request.URL.RawQuery = rawQuery
 		return nil

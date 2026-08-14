@@ -66,7 +66,7 @@ func New[V GenericType](cfg Config, client dynamic.ResourceInterface, opts ...Op
 		cfg:    cfg,
 	}
 
-	if err := config.ApplyOpts(dyn, opts...); err != nil {
+	if err := config.ApplyOptions(dyn, opts...); err != nil {
 		return nil, fmt.Errorf("failed to apply options: %w", err)
 	}
 

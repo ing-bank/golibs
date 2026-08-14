@@ -100,7 +100,7 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 		Http: &http.Client{},
 	}
 
-	if err := config.ApplyOpts(client, opts...); err != nil {
+	if err := config.ApplyOptions(client, opts...); err != nil {
 		return nil, fmt.Errorf("failed to apply client options: %w", err)
 	}
 
@@ -114,7 +114,7 @@ func NewForConfig(c *Config, opts ...ClientOption) (*Client, error) {
 	ApplyDefaults(&cfg)
 	// validate the config
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid HTTP health check config: %w", err)
+		return nil, fmt.Errorf("invalid HTTP config: %w", err)
 	}
 
 	clientOptions := []ClientOption{
@@ -130,7 +130,7 @@ func NewForConfig(c *Config, opts ...ClientOption) (*Client, error) {
 	if c.TLS.UseTLS() || c.TLS.InsecureSkipVerify {
 		tlsconfig, err = tlsclient.NewForConfig(&c.TLS)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create TLS config for health check: %w", err)
+			return nil, fmt.Errorf("failed to create TLS config for HTTP client: %w", err)
 		}
 		clientOptions = append(clientOptions, WithNewTransport(
 			WithTLSConfig(tlsconfig),
@@ -142,9 +142,13 @@ func NewForConfig(c *Config, opts ...ClientOption) (*Client, error) {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
-	// set default tripperware if none was provided
+	// set (default) tripperware if none was provided
 	if client.Tripperware == nil {
-		client.Tripperware = tripperware.DefaultTripperware
+		trip, err := tripperware.NewForConfig(cfg.Tripperware)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create tripperware for HTTP client: %w", err)
+		}
+		client.Tripperware = trip
 	}
 
 	// apply all extra options
@@ -166,7 +170,7 @@ func (c *Client) do(ctx context.Context, method, url string, request any, option
 	}
 
 	// Set request options
-	if err := config.ApplyOpts(req, append(c.DefaultRequestOptions, options...)...); err != nil {
+	if err := config.ApplyOptions(req, append(c.DefaultRequestOptions, options...)...); err != nil {
 		return &response.Data{Err: fmt.Errorf("%w: %v", ErrFailedRequestOption, err)}
 	}
 

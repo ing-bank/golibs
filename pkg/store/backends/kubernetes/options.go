@@ -12,7 +12,7 @@ import (
 type Option[V GenericType] = config.Option[*DynamicResource[V]]
 
 // WithLabelsEnricher sets a labels enricher function for dynamically adding labels to resources.
-func WithLabelsEnricher[V GenericType](enricher LabelsEnricher[V]) config.Opt[*DynamicResource[V]] {
+func WithLabelsEnricher[V GenericType](enricher LabelsEnricher[V]) config.Option[*DynamicResource[V]] {
 	return func(d *DynamicResource[V]) error {
 		d.labelsEnricher = enricher
 		return nil

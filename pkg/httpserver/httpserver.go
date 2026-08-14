@@ -53,7 +53,7 @@ func NewForConfig(cfg *Config, opts ...Option) (*Server, error) {
 	}
 
 	// apply options to the server
-	if err := config.ApplyOpts(s, opts...); err != nil {
+	if err := config.ApplyOptions(s, opts...); err != nil {
 		return nil, fmt.Errorf("failed to apply TLS option: %w", err)
 	}
 

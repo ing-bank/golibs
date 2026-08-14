@@ -180,7 +180,7 @@ func NewForConfig(cfg *Config, opts ...Option) (*DeploymentReloader, error) {
 	}
 
 	r := &DeploymentReloader{cfg: &c, client: kubeclient}
-	if err := config.ApplyOpts(r, opts...); err != nil {
+	if err := config.ApplyOptions(r, opts...); err != nil {
 		return nil, fmt.Errorf("failed to apply options: %w", err)
 	}
 

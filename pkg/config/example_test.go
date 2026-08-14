@@ -49,21 +49,21 @@ type Bar struct {
 	Active bool
 }
 
-func WithName(name string) Opt[*Bar] {
+func WithName(name string) Option[*Bar] {
 	return func(b *Bar) error {
 		b.Name = name
 		return nil
 	}
 }
 
-func WithCount(count int) Opt[*Bar] {
+func WithCount(count int) Option[*Bar] {
 	return func(b *Bar) error {
 		b.Count = count
 		return nil
 	}
 }
 
-func WithActive(active bool) Opt[*Bar] {
+func WithActive(active bool) Option[*Bar] {
 	return func(b *Bar) error {
 		b.Active = active
 		return nil
@@ -72,7 +72,7 @@ func WithActive(active bool) Opt[*Bar] {
 
 func ExampleOpt() {
 	bar := &Bar{}
-	_ = ApplyOpts(bar,
+	_ = ApplyOptions(bar,
 		WithName("example-bar"),
 		WithCount(42),
 		WithActive(true))

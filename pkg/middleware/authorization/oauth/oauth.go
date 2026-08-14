@@ -145,7 +145,7 @@ func New(cfg Config, opts ...Option) (*Provider, error) {
 		}
 	}
 
-	if err := config.ApplyOpts(p, opts...); err != nil {
+	if err := config.ApplyOptions(p, opts...); err != nil {
 		return nil, fmt.Errorf("failed to apply TLS option: %w", err)
 	}
 

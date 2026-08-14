@@ -19,6 +19,7 @@ import (
 var defaultSkipPaths = []string{"/metrics", "/healthz", "/readyz", "/swagger"}
 
 type LoggingOptions struct {
+	Enabled                 bool     `yaml:"enabled" json:"enabled,omitempty"`
 	DisabledRequestLogger   bool     `yaml:"disabledRequestLogger" json:"disabledRequestLogger,omitempty"`     // Default false
 	DisabledResponseLogger  bool     `yaml:"disabledResponseLogger" json:"disabledResponseLogger,omitempty"`   // Default false
 	LogFailedRequests       bool     `yaml:"logFailedRequests" json:"logFailedRequests,omitempty"`             // Default false
@@ -42,6 +43,10 @@ func (opts *LoggingOptions) SetDefaults() {
 func Logging(options ...LoggingOptions) Tripperware {
 	opts := opt.Opt(LoggingOptions{}, options) // Keep same function signature as before
 	opts.SetDefaults()
+
+	if !opts.Enabled {
+		return EmptyTripperware()
+	}
 
 	return func(next Endpoint) Endpoint {
 		return func(ctx context.Context, request *http.Request) *response.Data {

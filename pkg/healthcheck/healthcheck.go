@@ -84,7 +84,7 @@ type HealthCheck struct {
 }
 
 func (h *HealthCheck) With(opts ...Option) error {
-	return config.ApplyOpts(h, opts...)
+	return config.ApplyOptions(h, opts...)
 }
 
 type Response struct {
@@ -181,7 +181,7 @@ func NewForConfig(c *Config, opts ...Option) (*HealthCheck, error) {
 		systemInfoEnabled: cfg.SystemInfo,
 		Component:         cfg.ComponentConfig,
 	}
-	if err := config.ApplyOpts(h, opts...); err != nil {
+	if err := config.ApplyOptions(h, opts...); err != nil {
 		return nil, fmt.Errorf("failed to apply TLS option: %w", err)
 	}
 

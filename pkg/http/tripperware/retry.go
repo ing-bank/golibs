@@ -12,7 +12,6 @@ import (
 	"github.com/ing-bank/golibs/pkg/errors"
 	"github.com/ing-bank/golibs/pkg/http/response"
 	"github.com/ing-bank/golibs/pkg/retry"
-	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,52 +25,60 @@ var (
 
 // Retrier provides retry functionality for HTTP requests.
 type Retrier struct {
-	RetryableErrorFn RetryableErrorFn
-	Backoff          retry.Backoff
+	cfg *RetrierConfig
 }
 
 // RetrierOptions defines options for configuring a Retrier.
-type RetrierOptions = config.Option[*Retrier]
+type RetrierOptions = config.Option[*RetrierConfig]
 
 // RetryableErrorFn defines a function type to determine if an error is retryable.
 type RetryableErrorFn func(err error) bool
 
 // WithRetryableErrorFn sets the function to determine if an error is retryable.
-func WithRetryableErrorFn(fn RetryableErrorFn) config.Opt[*Retrier] {
-	return func(r *Retrier) error {
+func WithRetryableErrorFn(fn RetryableErrorFn) config.Option[*RetrierConfig] {
+	return func(r *RetrierConfig) error {
 		r.RetryableErrorFn = fn
 		return nil
 	}
 }
 
 // WithBackoff sets the backoff strategy for the Retrier.
-func WithBackoff(backoff retry.Backoff) config.Opt[*Retrier] {
-	return func(r *Retrier) error {
-		r.Backoff = backoff
+func WithBackoff(backoff retry.Backoff) config.Option[*RetrierConfig] {
+	return func(r *RetrierConfig) error {
+		r.Backoff = &backoff
 		return nil
 	}
 }
 
 // RetrierConfig holds configuration for the Retrier.
 type RetrierConfig struct {
-	Retries  int             `yaml:"retries" json:"retries"`
-	Duration metav1.Duration `yaml:"duration" json:"duration"`
+	Enabled          bool             `yaml:"enabled" json:"enabled"`
+	Retries          int              `yaml:"retries" json:"retries"`
+	Duration         metav1.Duration  `yaml:"duration" json:"duration"`
+	RetryableErrorFn RetryableErrorFn `yaml:"-" json:"-"`
+	Backoff          *retry.Backoff   `yaml:"-" json:"-"` // TODO: Make Backoff configurable via YAML/JSON
 }
 
 // DefaultRetrierConfig returns a RetrierConfig with default values applied.
 func DefaultRetrierConfig() *RetrierConfig {
 	c := new(RetrierConfig)
-	c.ApplyDefaultRetrierConfig()
+	c.ApplyDefaults()
 	return c
 }
 
-// ApplyDefaultRetrierConfig sets default values for RetrierConfig fields if they are not set.
-func (c *RetrierConfig) ApplyDefaultRetrierConfig() {
+// ApplyDefaults sets default values for RetrierConfig fields if they are not set.
+func (c *RetrierConfig) ApplyDefaults() {
 	if c.Retries == 0 {
 		c.Retries = DefaultRetryAttempts
 	}
 	if c.Duration.Duration == 0 {
 		c.Duration = DefaultRetryDelay
+	}
+	if c.Backoff == nil {
+		c.Backoff = new(retry.NewDefaultBackoff(c.Retries, c.Duration.Duration))
+	}
+	if c.RetryableErrorFn == nil {
+		c.RetryableErrorFn = errors.IsRetryableError
 	}
 }
 
@@ -83,6 +90,12 @@ func (c *RetrierConfig) Validate() error {
 	if c.Duration.Duration <= 0 {
 		return fmt.Errorf("invalid retrier config: duration must be greater than zero")
 	}
+	if c.Backoff == nil {
+		return fmt.Errorf("invalid retrier config: backoff must not be nil")
+	}
+	if c.RetryableErrorFn == nil {
+		return fmt.Errorf("invalid retrier config: retryable error function must not be nil")
+	}
 	return nil
 }
 
@@ -93,47 +106,29 @@ type ClonedRequest struct {
 }
 
 // NewRetrierForConfig creates a Retrier from the provided RetrierConfig, applying any provided options.
-func NewRetrierForConfig(c *RetrierConfig, opts ...RetrierOptions) (*Retrier, error) {
-	if c == nil {
-		return nil, fmt.Errorf("config is nil")
-	}
-	cfg := *c // shallow copy
-
-	// Apply the default configuration if not provided
-	cfg.ApplyDefaultRetrierConfig()
-
-	// Validate the configuration
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid retrier config: %w", err)
+func NewRetrierForConfig(cfg RetrierConfig) (*Retrier, error) {
+	if err := config.Configure(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to configure retrier: %w", err)
 	}
 
-	r := &Retrier{
-		Backoff:          retry.NewDefaultBackoff(cfg.Retries, cfg.Duration.Duration),
-		RetryableErrorFn: errors.IsRetryableError,
-	}
-
-	// Apply any additional options
-	if err := config.ApplyOpts(r, opts...); err != nil {
-		return nil, fmt.Errorf("failed to apply retrier options: %w", err)
-	}
-	return r, nil
+	return &Retrier{cfg: &cfg}, nil
 }
 
 // NewRetrier creates a Retrier with default settings, applying any provided options.
-func NewRetrier(opts ...RetrierOptions) *Retrier {
-	cfg := DefaultRetrierConfig()
-	r := &Retrier{
-		Backoff:          retry.NewDefaultBackoff(cfg.Retries, cfg.Duration.Duration),
-		RetryableErrorFn: errors.IsRetryableError,
+func NewRetrier(opts ...RetrierOptions) (*Retrier, error) {
+	cfg, err := config.New[RetrierConfig](opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create retrier config: %w", err)
 	}
-	if err := config.ApplyOpts(r, opts...); err != nil {
-		log.Errorf("failed to apply retrier options: %s", err)
-	}
-	return r
+
+	return NewRetrierForConfig(*cfg)
 }
 
 // Tripperware returns a tripperware that retries requests based on the Retrier's settings.
 func (r *Retrier) Tripperware() Tripperware {
+	if !r.cfg.Enabled {
+		return EmptyTripperware()
+	}
 	return func(next Endpoint) Endpoint {
 		return func(ctx context.Context, request *http.Request) *response.Data {
 
@@ -144,7 +139,7 @@ func (r *Retrier) Tripperware() Tripperware {
 
 			var resp *response.Data
 
-			err = retry.OnError(ctx, r.Backoff, r.RetryableErrorFn, func() error {
+			err = retry.OnError(ctx, *r.cfg.Backoff, r.cfg.RetryableErrorFn, func() error {
 				reqCopy := clonedReq.GetRequest(ctx)
 				resp = next(ctx, reqCopy)
 				return resp.Error()

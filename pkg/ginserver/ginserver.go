@@ -33,7 +33,7 @@ type Engine struct {
 }
 
 func (e *Engine) With(opts ...Option) error {
-	return config.ApplyOpts(e, opts...)
+	return config.ApplyOptions(e, opts...)
 }
 
 func New(opts ...Option) (*Engine, error) {
@@ -63,9 +63,7 @@ func NewEngine(c *Config, opts ...Option) (*Engine, error) {
 	}
 
 	// configure the HTTP server with the provided configuration
-	serverOptions := config.NewOptions(
-		httpserver.WithHandler(router),
-	)
+	serverOptions := []config.Option[*httpserver.Server]{httpserver.WithHandler(router)}
 
 	var tlsconfig *tls.Config
 	var err error
@@ -129,7 +127,7 @@ func NewCustomEngine(c *Config, middlewareOption MiddlewareOption, engineOption 
 	}
 
 	// apply options to gin engine after loading middleware and services
-	if err := config.ApplyOpts(e, engineOption...); err != nil {
+	if err := config.ApplyOptions(e, engineOption...); err != nil {
 		return nil, fmt.Errorf("failed to apply Engine option: %w", err)
 	}
 

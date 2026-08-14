@@ -30,12 +30,22 @@ func Chain(outer Tripperware, others ...Tripperware) Tripperware {
 	}
 }
 
+func EmptyTripperware() Tripperware {
+	return func(next Endpoint) Endpoint {
+		return func(ctx context.Context, request *http.Request) *response.Data {
+			return next(ctx, request)
+		}
+	}
+}
+
+var DefaultTripperware = NewOrDie() // TODO: not nice to die in init
+
 // DefaultTripperware provides a default tripperware chain.
 // It includes retrying, logging, circuit breaking, rate limiting and metrics.
-var DefaultTripperware = Chain(
-	NewRetrier().Tripperware(),
-	Logging(),
-	NewBreaker().Tripperware(),
-	NewRateLimiter().Tripperware(),
-	Metrics(true),
-)
+//var DefaultTripperware = Chain(
+//	NewRetrier().Tripperware(),
+//	Logging(LoggingOptions{Enabled: true}),
+//	NewBreaker().Tripperware(),
+//	NewRateLimiter().Tripperware(),
+//	Metrics(MetricsConfig{Enabled: true, LogTransportTimesOnErr: true}),
+//)

@@ -17,7 +17,7 @@ import (
 
 func RegisterScopeType[T scope.Scope](name string, option ...config.Option[*AnonScopeParser[T]]) error {
 	parser := &AnonScopeParser[T]{name: name}
-	if err := config.ApplyOpts(parser, option...); err != nil {
+	if err := config.ApplyOptions(parser, option...); err != nil {
 		return err
 	}
 	scope.RegisterParser(parser)
@@ -41,7 +41,7 @@ func (a AnonScopeParser[T]) ParseCertificateScope(in json.RawMessage) (scope.Sco
 	return scope.FromJSON[T](in)
 }
 
-func WithUserHeaderParser[T scope.Scope](headerParser func(c *gin.Context) []T) config.Opt[*AnonScopeParser[T]] {
+func WithUserHeaderParser[T scope.Scope](headerParser func(c *gin.Context) []T) config.Option[*AnonScopeParser[T]] {
 	return func(f *AnonScopeParser[T]) error {
 		f.parseUserHeaders = headerParser
 		return nil

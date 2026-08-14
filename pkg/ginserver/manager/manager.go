@@ -37,12 +37,12 @@ type SidecarConfig struct {
 }
 
 type Manager struct {
-	Webserver       *ginserver.Engine
-	Sidecar         *ginserver.Engine
-	Proxy           *ginserver.Engine
-	proxyOptions    []ginserver.Option
+	Webserver        *ginserver.Engine
+	Sidecar          *ginserver.Engine
+	Proxy            *ginserver.Engine
+	proxyOptions     []ginserver.Option
 	proxyInitialized bool
-	shutdownTimeout time.Duration
+	shutdownTimeout  time.Duration
 }
 
 func newHTTPCheck(name, desc, host string, port uint16, tlsConfig tlsclient.Config) healthcheck.JobConfig {
@@ -131,7 +131,7 @@ func NewManager(c *Config, opts ...Option) (*Manager, error) {
 	}
 
 	// apply options to gin engine
-	if err := config.ApplyOpts(m, opts...); err != nil {
+	if err := config.ApplyOptions(m, opts...); err != nil {
 		return nil, fmt.Errorf("failed to apply Engine option: %w", err)
 	}
 
@@ -348,7 +348,7 @@ func reuseTLSConfig(s tlsserver.Config) tlsclient.Config {
 }
 
 func (m *Manager) With(opts ...Option) error {
-	return config.ApplyOpts(m, opts...)
+	return config.ApplyOptions(m, opts...)
 }
 
 func (m *Manager) Run(ctx context.Context) error {

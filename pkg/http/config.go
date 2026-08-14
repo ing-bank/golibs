@@ -1,13 +1,15 @@
 package http
 
 import (
+	"github.com/ing-bank/golibs/pkg/http/tripperware"
 	"github.com/ing-bank/golibs/pkg/tlsclient"
 )
 
 // Config holds configuration for the HTTP client.
 type Config struct {
-	TLS            tlsclient.Config  `json:"tls" yaml:"tls"`
-	DefaultHeaders map[string]string `json:"defaultHeaders" yaml:"defaultHeaders"`
+	TLS            tlsclient.Config   `json:"tls" yaml:"tls"`
+	Tripperware    tripperware.Config `json:"tripperware" yaml:"tripperware"`
+	DefaultHeaders map[string]string  `json:"defaultHeaders" yaml:"defaultHeaders"`
 }
 
 // DefaultConfig returns a Config struct with default values applied.

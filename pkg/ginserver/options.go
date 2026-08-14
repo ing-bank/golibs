@@ -11,7 +11,7 @@ import (
 type Option = config.Option[*Engine]
 
 // WithMode sets the gin mode for the engine
-func WithMode(mode GinMode) config.Opt[*Engine] {
+func WithMode(mode GinMode) config.Option[*Engine] {
 	return func(e *Engine) error {
 		gin.SetMode(string(mode))
 		return nil
@@ -19,7 +19,7 @@ func WithMode(mode GinMode) config.Opt[*Engine] {
 }
 
 // WithHealthChecks sets up the engine's health checker with the provided options
-func WithHealthChecks(opts ...healthcheck.Option) config.Opt[*Engine] {
+func WithHealthChecks(opts ...healthcheck.Option) config.Option[*Engine] {
 	return func(e *Engine) error {
 		if e.Services == nil {
 			e.Services = new(Service)
@@ -37,7 +37,7 @@ func WithHealthChecks(opts ...healthcheck.Option) config.Opt[*Engine] {
 }
 
 // WithHealthCheckAdd adds the provided health check jobs to the engine's prober
-func WithHealthCheckAdd(jobs ...healthcheck.JobConfig) config.Opt[*Engine] {
+func WithHealthCheckAdd(jobs ...healthcheck.JobConfig) config.Option[*Engine] {
 	return func(e *Engine) error {
 		if e.Services == nil {
 			return fmt.Errorf("services not initialized")
@@ -50,7 +50,7 @@ func WithHealthCheckAdd(jobs ...healthcheck.JobConfig) config.Opt[*Engine] {
 }
 
 // WithRoutes registers the provided routes with the gin engine
-func WithRoutes(routes ...Route) config.Opt[*Engine] {
+func WithRoutes(routes ...Route) config.Option[*Engine] {
 	return func(e *Engine) error {
 		for _, r := range routes {
 			r.Register(e.Engine)
@@ -60,7 +60,7 @@ func WithRoutes(routes ...Route) config.Opt[*Engine] {
 }
 
 // WithAddr sets the address for the gin engine
-func WithAddr(addr string) config.Opt[*Engine] {
+func WithAddr(addr string) config.Option[*Engine] {
 	return func(e *Engine) error {
 		e.HTTPServer.Addr = addr
 		return nil
@@ -68,7 +68,7 @@ func WithAddr(addr string) config.Opt[*Engine] {
 }
 
 // WithServices sets the services for the gin engine
-func WithServices(s *Service) config.Opt[*Engine] {
+func WithServices(s *Service) config.Option[*Engine] {
 	return func(e *Engine) error {
 		e.Services = s
 		return nil
@@ -76,7 +76,7 @@ func WithServices(s *Service) config.Opt[*Engine] {
 }
 
 // WithMiddleware adds the provided middleware handlers to the gin engine
-func WithMiddleware(m ...gin.HandlerFunc) config.Opt[*Engine] {
+func WithMiddleware(m ...gin.HandlerFunc) config.Option[*Engine] {
 	return func(e *Engine) error {
 		e.Use(m...)
 		return nil
