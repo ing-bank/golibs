@@ -71,6 +71,15 @@ func WithNewTransport(options ...TransportOption) config.Option[*Client] {
 	}
 }
 
+func WithNoRedirect() config.Option[*Client] {
+	return func(c *Client) error {
+		c.Http.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
+}
+
 // WithCheckRedirect specifies the policy for handling redirects
 func WithCheckRedirect(redirect func(req *http.Request, via []*http.Request) error) config.Option[*Client] {
 	return func(c *Client) error {
@@ -83,6 +92,14 @@ func WithCheckRedirect(redirect func(req *http.Request, via []*http.Request) err
 func WithRequestOptions(opts ...RequestOption) config.Option[*Client] {
 	return func(c *Client) error {
 		c.DefaultRequestOptions = opts
+		return nil
+	}
+}
+
+// WithAddRequestOptions appends default RequestOptions for every request the client makes
+func WithAddRequestOptions(opts ...RequestOption) config.Option[*Client] {
+	return func(c *Client) error {
+		c.DefaultRequestOptions = append(c.DefaultRequestOptions, opts...)
 		return nil
 	}
 }

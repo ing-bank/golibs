@@ -27,11 +27,11 @@ type Config struct {
 
 var DefaultConfig = config.DefaultConfig[Config]() // Makes new struct and calls ApplyDefaults, returns func () *Config
 
-type Option = config.Option[*Config]
+type Option = config.Option[*Printer]
 
 func WithMessage(msg string) Option {
-	return func(cfg *Config) error {
-		cfg.Message = msg
+	return func(p *Printer) error {
+		p.cfg.Message = msg
 		return nil
 	}
 }
@@ -69,19 +69,16 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func NewPrinterFromConfig(cfg Config) (*Printer, error) {
+func NewPrinterFromConfig(cfg Config, opts ...Option) (*Printer, error) {
 	if err := config.Configure(cfg); err != nil {
 		return nil, err
 	}
-	return &Printer{cfg: &cfg}, nil
+	printer := &Printer{cfg: &cfg}
+	return printer, config.ApplyOptions(printer, opts...)
 }
 
 func NewPrinter(opts ...Option) (*Printer, error) {
-	cfg, err := config.New[Config](opts...)
-	if err != nil {
-		return nil, err
-	}
-	return NewPrinterFromConfig(*cfg)
+	return NewPrinterFromConfig(Config{}, opts...)
 }
 
 func Example() {

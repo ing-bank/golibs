@@ -2,7 +2,12 @@ package tripperware
 
 import "github.com/ing-bank/golibs/pkg/config"
 
-type Option = config.Option[*Config]
+// For posterity: Tripperware does not have a runtime client struct at the moment, it just returns a function.
+// Therefore, it is not meaninful to have a config.Option[*Tripperware] type, as there is no client
+// struct to apply the options to. It's possible to have options that act on the config, but the benefit
+// would be very small. Instead, lets skip the config options for now. This allows future extensions to this
+// package to define tripperware options on a client when that is introduced in a backwards compatible fashion.
+// type Option = config.Option[*Config/Tripperware]
 
 type Config struct {
 	Breaker     *CircuitBreakerConfig `yaml:"breaker" json:"breaker"`
@@ -14,19 +19,19 @@ type Config struct {
 
 func (c *Config) ApplyDefaults() {
 	if c.Breaker == nil {
-		c.Breaker = &CircuitBreakerConfig{Enabled: true}
+		c.Breaker = &CircuitBreakerConfig{Disabled: false}
 	}
 	if c.Logging == nil {
-		c.Logging = &LoggingConfig{}
+		c.Logging = &LoggingConfig{Disabled: false}
 	}
 	if c.Metrics == nil {
-		c.Metrics = &MetricsConfig{Enabled: true}
+		c.Metrics = &MetricsConfig{Disabled: false}
 	}
 	if c.RateLimiter == nil {
-		c.RateLimiter = &RateLimiterConfig{Enabled: true}
+		c.RateLimiter = &RateLimiterConfig{Disabled: false}
 	}
 	if c.Retrier == nil {
-		c.Retrier = &RetrierConfig{Enabled: true}
+		c.Retrier = &RetrierConfig{Disabled: false}
 	}
 }
 
@@ -65,20 +70,12 @@ func NewForConfig(cfg Config) (Tripperware, error) {
 	), nil
 }
 
-func New(opts ...Option) (Tripperware, error) {
-	cfg, err := config.New[Config](opts...)
-	if err != nil {
-		return nil, err
-	}
-	return NewForConfig(*cfg)
+func New() (Tripperware, error) {
+	return NewForConfig(Config{})
 }
 
-func NewOrDie(opts ...Option) Tripperware {
-	cfg, err := config.New[Config](opts...)
-	if err != nil {
-		panic(err)
-	}
-	tw, err := NewForConfig(*cfg)
+func NewOrDie() Tripperware {
+	tw, err := New()
 	if err != nil {
 		panic(err)
 	}

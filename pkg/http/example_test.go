@@ -64,8 +64,8 @@ func ExampleNewClient() {
 	client, err := NewClient(
 		WithTripperware(tripperware.DefaultTripperware),
 		WithNewTraceTransport(
-			// InsecureSkipVerify(),
-			// WithTLS(cert, key, CAs...)
+		// InsecureSkipVerify(),
+		// WithTLS(cert, key, CAs...)
 		),
 		WithRequestOptions(
 			WithHeaders(map[string]string{"foo": "bar"}),
@@ -173,13 +173,13 @@ func ExampleNewForConfig() {
 	}
 
 	cfg := &Config{
-		TLS: tlsclient.Config{
+		TLS: new(tlsclient.Config{
 			Config: tlsutils.Config{
 				Cert: certPath,
 				Key:  keyPath,
 			},
 			InsecureSkipVerify: true,
-		},
+		}),
 		DefaultHeaders: map[string]string{
 			"Authorization": "Bearer token",
 			"X-Custom":      "value",

@@ -52,7 +52,6 @@ package http
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,77 +92,42 @@ var ErrTimeoutStatusChange = errors.New("timed out awaiting status change")
 // NewClient creates a Client and allows optional ClientOption(s) to be set. ClientOptions
 // can modify the HTTP client itself, set tripperware, or set default RequestOptions.
 func NewClient(opts ...ClientOption) (*Client, error) {
-	client := &Client{
-		Tripperware: func(endpoint tripperware.Endpoint) tripperware.Endpoint {
-			return endpoint
-		},
-		Http: &http.Client{},
-	}
-
-	if err := config.ApplyOptions(client, opts...); err != nil {
-		return nil, fmt.Errorf("failed to apply client options: %w", err)
-	}
-
-	return client, nil
+	return NewClientForConfig(Config{}, opts...)
 }
 
-// TODO use ClientConfig Option etc
-//func NewClientForConfig(cfg Config) (*Client, error) {
-//
-//}
-
-func NewForConfig(c *Config, opts ...ClientOption) (*Client, error) {
-	cfg := *c // shallow copy
-
-	// apply default values to the config
-	ApplyDefaults(&cfg)
-	// validate the config
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid HTTP config: %w", err)
+func NewClientForConfig(cfg Config, opts ...ClientOption) (*Client, error) {
+	if err := config.Configure(cfg); err != nil {
+		return nil, fmt.Errorf("failed to configure HTTP client: %w", err)
 	}
 
-	clientOptions := []ClientOption{
-		// not follow HTTP redirects automatically and instead return the last response received.
-		WithCheckRedirect(func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		}),
+	// Construct tripperware chain from config
+	trip, err := tripperware.NewForConfig(cfg.Tripperware)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tripperware for HTTP client: %w", err)
 	}
 
-	var tlsconfig *tls.Config
-	var err error
-
-	if c.TLS.UseTLS() || c.TLS.InsecureSkipVerify {
-		tlsconfig, err = tlsclient.NewForConfig(&c.TLS)
+	// Update client options based on config
+	if !cfg.FollowRedirect {
+		opts = append(opts, WithNoRedirect())
+	}
+	if len(cfg.DefaultHeaders) > 0 {
+		opts = append(opts, WithAddRequestOptions(WithAddHeaders(cfg.DefaultHeaders)))
+	}
+	if cfg.TLS != nil { // golang TLS config sets certain defaults if TLS is nil, so we inherit these semantics
+		tlsconfig, err := tlsclient.NewForConfig(cfg.TLS)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS config for HTTP client: %w", err)
 		}
-		clientOptions = append(clientOptions, WithNewTransport(
-			WithTLSConfig(tlsconfig),
-		))
+		opts = append(opts, WithNewTransport(WithTLSConfig(tlsconfig)))
 	}
 
-	client, err := NewClient(clientOptions...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create client: %w", err)
-	}
+	client := &Client{Tripperware: trip, Http: &http.Client{}}
+	return client, config.ApplyOptions(client, opts...)
+}
 
-	// set (default) tripperware if none was provided
-	if client.Tripperware == nil {
-		trip, err := tripperware.NewForConfig(cfg.Tripperware)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create tripperware for HTTP client: %w", err)
-		}
-		client.Tripperware = trip
-	}
-
-	// apply all extra options
-	// this allows overriding the default tripperware if needed
-	// and setting default request options
-	if err := client.With(opts...); err != nil {
-		return nil, fmt.Errorf("failed to apply client options: %w", err)
-	}
-
-	return client, nil
+// Deprecated: use NewClientForConfig instead
+func NewForConfig(c *Config, opts ...ClientOption) (*Client, error) {
+	return NewClientForConfig(*c, opts...)
 }
 
 // do executes a http request, it applies default request options and calls tripperware

@@ -20,7 +20,7 @@ type Breaker struct {
 }
 
 type CircuitBreakerConfig struct {
-	Enabled   bool                `yaml:"enabled" json:"enabled"`
+	Disabled  bool                `yaml:"disabled" json:"disabled"`
 	GoBreaker *gobreaker.Settings `yaml:"-" json:"-"`
 }
 
@@ -56,8 +56,11 @@ func NewBreakerForConfig(cfg CircuitBreakerConfig) (*Breaker, error) {
 }
 
 func NewBreaker(opts ...CircuitBreakerOptions) (*Breaker, error) {
-	cfg, err := config.New[CircuitBreakerConfig](opts...)
+	cfg, err := config.New[CircuitBreakerConfig]()
 	if err != nil {
+		return nil, err
+	}
+	if err := config.ApplyOptions(cfg, opts...); err != nil {
 		return nil, err
 	}
 	return NewBreakerForConfig(*cfg)
@@ -71,7 +74,7 @@ func WithCircuitBreakerSettings(settings *gobreaker.Settings) CircuitBreakerOpti
 }
 
 func (b *Breaker) Tripperware() Tripperware {
-	if !b.cfg.Enabled {
+	if b.cfg.Disabled {
 		return EmptyTripperware()
 	}
 	return func(next Endpoint) Endpoint {

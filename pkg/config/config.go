@@ -140,12 +140,9 @@ func LoadOnly(target Validatable, path ...string) error {
 
 // Configure applies Defaults, Prepare, and Validate to the target configuration object if it implements the
 // respective interfaces. Configure is meant to be called by constructors.
-func Configure[T any](target T, opts ...Option[T]) error {
+func Configure[T any](target T) error {
 	if defaulter, ok := any(target).(Defaulter); ok {
 		defaulter.ApplyDefaults()
-	}
-	if err := ApplyOptions(target, opts...); err != nil {
-		return err
 	}
 	if preparable, ok := any(target).(Preperable); ok {
 		return preparable.Prepare()
@@ -159,9 +156,9 @@ func Configure[T any](target T, opts ...Option[T]) error {
 	return nil
 }
 
-func New[T any](opts ...Option[*T]) (*T, error) {
+func New[T any]() (*T, error) {
 	var cfg T
-	if err := Configure(&cfg, opts...); err != nil {
+	if err := Configure(&cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil

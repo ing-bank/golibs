@@ -38,7 +38,7 @@ func EmptyTripperware() Tripperware {
 	}
 }
 
-var DefaultTripperware = NewOrDie() // TODO: not nice to die in init
+var DefaultTripperware = NewOrDie() // Not nice to die in init, but unittests catch this for the defaults
 
 // DefaultTripperware provides a default tripperware chain.
 // It includes retrying, logging, circuit breaking, rate limiting and metrics.

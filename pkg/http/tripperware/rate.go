@@ -23,8 +23,8 @@ type RateLimiter struct {
 type RateLimiterOptions = config.Option[*RateLimiterConfig]
 
 type RateLimiterConfig struct {
-	Enabled   bool `yaml:"enabled" json:"enabled"`
-	Endpoints map[string]struct {
+	Disabled        bool `yaml:"disabled" json:"disabled"`
+	Endpoints       map[string]struct {
 		Interval metav1.Duration `yaml:"interval" json:"interval"`
 		Burst    int             `yaml:"burst" json:"burst"`
 	} `yaml:"endpoints" json:"endpoints"`
@@ -53,15 +53,18 @@ func NewRateLimiterForConfig(cfg RateLimiterConfig) (*RateLimiter, error) {
 }
 
 func NewRateLimiter(opts ...RateLimiterOptions) (*RateLimiter, error) {
-	cfg, err := config.New[RateLimiterConfig](opts...)
+	cfg, err := config.New[RateLimiterConfig]()
 	if err != nil {
+		return nil, err
+	}
+	if err := config.ApplyOptions(cfg, opts...); err != nil {
 		return nil, err
 	}
 	return NewRateLimiterForConfig(*cfg)
 }
 
 func (r *RateLimiter) Tripperware() Tripperware {
-	if !r.cfg.Enabled {
+	if r.cfg.Disabled {
 		return EmptyTripperware()
 	}
 	return func(next Endpoint) Endpoint {

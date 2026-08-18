@@ -52,7 +52,7 @@ func WithBackoff(backoff retry.Backoff) config.Option[*RetrierConfig] {
 
 // RetrierConfig holds configuration for the Retrier.
 type RetrierConfig struct {
-	Enabled          bool             `yaml:"enabled" json:"enabled"`
+	Disabled         bool             `yaml:"disabled" json:"disabled"`
 	Retries          int              `yaml:"retries" json:"retries"`
 	Duration         metav1.Duration  `yaml:"duration" json:"duration"`
 	RetryableErrorFn RetryableErrorFn `yaml:"-" json:"-"`
@@ -116,17 +116,19 @@ func NewRetrierForConfig(cfg RetrierConfig) (*Retrier, error) {
 
 // NewRetrier creates a Retrier with default settings, applying any provided options.
 func NewRetrier(opts ...RetrierOptions) (*Retrier, error) {
-	cfg, err := config.New[RetrierConfig](opts...)
+	cfg, err := config.New[RetrierConfig]()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create retrier config: %w", err)
 	}
-
+	if err := config.ApplyOptions(cfg, opts...); err != nil {
+		return nil, fmt.Errorf("failed to apply retrier options: %w", err)
+	}
 	return NewRetrierForConfig(*cfg)
 }
 
 // Tripperware returns a tripperware that retries requests based on the Retrier's settings.
 func (r *Retrier) Tripperware() Tripperware {
-	if !r.cfg.Enabled {
+	if r.cfg.Disabled {
 		return EmptyTripperware()
 	}
 	return func(next Endpoint) Endpoint {

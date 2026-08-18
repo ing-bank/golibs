@@ -22,7 +22,7 @@ var defaultSkipPaths = []string{"/metrics", "/healthz", "/readyz", "/swagger"}
 type LoggingOption = config.Option[*LoggingConfig]
 
 type LoggingConfig struct {
-	Enabled                 bool     `yaml:"enabled" json:"enabled,omitempty"`
+	Disabled                bool     `yaml:"disabled" json:"disabled,omitempty"`
 	DisabledRequestLogger   bool     `yaml:"disabledRequestLogger" json:"disabledRequestLogger,omitempty"`     // Default false
 	DisabledResponseLogger  bool     `yaml:"disabledResponseLogger" json:"disabledResponseLogger,omitempty"`   // Default false
 	LogFailedRequests       bool     `yaml:"logFailedRequests" json:"logFailedRequests,omitempty"`             // Default false
@@ -31,7 +31,7 @@ type LoggingConfig struct {
 	SkipPaths               []string `yaml:"skipPaths" json:"skipPaths,omitempty"`                             // Default defaultSkipPaths
 }
 
-func (opts *LoggingConfig) SetDefaults() {
+func (opts *LoggingConfig) ApplyDefaults() {
 	if opts.RequestCutoffThreshold == 0 {
 		opts.RequestCutoffThreshold = 10240
 	}
@@ -51,8 +51,11 @@ func NewLoggingForConfig(cfg LoggingConfig) (Tripperware, error) {
 }
 
 func NewLogging(options ...LoggingOption) (Tripperware, error) {
-	cfg, err := config.New[LoggingConfig](options...)
+	cfg, err := config.New[LoggingConfig]()
 	if err != nil {
+		return nil, err
+	}
+	if err := config.ApplyOptions(cfg, options...); err != nil {
 		return nil, err
 	}
 	return NewLoggingForConfig(*cfg)
@@ -60,13 +63,13 @@ func NewLogging(options ...LoggingOption) (Tripperware, error) {
 
 // Deprecated: use NewLogging instead
 func Logging(opts ...LoggingConfig) Tripperware {
-	cfg := opt.Opt(LoggingConfig{Enabled: true}, opts)
+	cfg := opt.Opt(LoggingConfig{Disabled: false}, opts)
 	trip, _ := NewLoggingForConfig(cfg)
 	return trip
 }
 
 func loggingTripperware(cfg *LoggingConfig) Tripperware {
-	if !cfg.Enabled {
+	if cfg.Disabled {
 		return EmptyTripperware()
 	}
 

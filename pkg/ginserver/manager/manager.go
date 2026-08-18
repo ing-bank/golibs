@@ -173,7 +173,7 @@ func newProxyCar(proxyConfig Config, mainConfig *Config, opts ...ginserver.Optio
 func injectProxyConfig(c *Config, webserverConfig *Config) error {
 	// inject TLS to the proxy client to perform mTLS calls to the webserver if mTLS is enabled on the webserver
 	if webserverConfig.TLSConfig.UseTLS() {
-		c.ProxyConfig.Config.HTTPConfig.TLS = reuseTLSConfig(webserverConfig.TLSConfig)
+		c.ProxyConfig.Config.HTTPConfig.TLS = new(reuseTLSConfig(webserverConfig.TLSConfig))
 	}
 	return nil
 }
