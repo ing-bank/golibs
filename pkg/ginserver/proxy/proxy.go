@@ -84,8 +84,8 @@ func (s *Proxy) Proxy(c *gin.Context) {
 	}
 	req.Header = c.Request.Header.Clone()
 
-	resp := s.httpClient.Exec(c.Request.Context(), req, nil)
-	if resp.Error() != nil {
+	resp := s.httpClient.Exec(c.Request.Context(), req)
+	if resp.Err != nil { // Catch only transport errors, ignore HTTP errors (4xx, 5xx) as they are valid responses from the backend
 		c.AbortWithStatusJSON(gohttp.StatusBadGateway, gin.H{"error": fmt.Sprintf("Backend error: %s", resp.Error())})
 		return
 	}
