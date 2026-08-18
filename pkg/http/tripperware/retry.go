@@ -144,7 +144,7 @@ func (r *Retrier) Tripperware() Tripperware {
 			err = retry.OnError(ctx, *r.cfg.Backoff, r.cfg.RetryableErrorFn, func() error {
 				reqCopy := clonedReq.GetRequest(ctx)
 				resp = next(ctx, reqCopy)
-				return resp.Error()
+				return resp.Err
 			})
 
 			if resp != nil && resp.Err == nil {
