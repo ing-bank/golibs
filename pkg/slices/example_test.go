@@ -183,3 +183,12 @@ func ExampleSymmetricDifference() {
 	// [{Golf GTD 2024} {Passat Alltrack 2024} {Golf GTI 2027} {Passat Variant 2027} {Golf Sportsvan 2024} {Polo Cross 2028} {Polo Sedan 2028}]
 
 }
+
+func ExampleRemove() {
+	letters := []string{"a", "foo", "b", "c", "foo", "d"}
+	Remove(&letters, "foo")
+	fmt.Println(letters)
+
+	// Output:
+	// [a b c d]
+}

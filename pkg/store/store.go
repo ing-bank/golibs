@@ -15,6 +15,8 @@ package store
 import (
 	"cmp"
 	"context"
+
+	"github.com/ing-bank/golibs/pkg/slices"
 )
 
 type ReadOnlyStore[K cmp.Ordered, V any] interface {
@@ -50,7 +52,19 @@ func AsMap[K cmp.Ordered, V any](ctx context.Context, store ReadOnlyStore[K, V],
 	return items.AsMap(), nil
 }
 
+func (items *ListItems[K, V]) Keys() []K {
+	if items == nil {
+		return nil
+	}
+	return slices.Transform(*items, func(item ListItem[K, V]) K {
+		return item.Key
+	})
+}
+
 func (items *ListItems[K, V]) AsMap() map[K]V {
+	if items == nil {
+		return make(map[K]V)
+	}
 	m := make(map[K]V, len(*items))
 	for _, item := range *items {
 		m[item.Key] = item.Value
