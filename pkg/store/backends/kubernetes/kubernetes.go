@@ -9,7 +9,9 @@ import (
 	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/errors"
 	"github.com/ing-bank/golibs/pkg/kubemock"
+	"github.com/ing-bank/golibs/pkg/slices"
 	"github.com/ing-bank/golibs/pkg/store"
+	labelstore "github.com/ing-bank/golibs/pkg/store/backends/labels"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -146,11 +148,11 @@ func (c *DynamicResource[V]) toUnstructured(value V, opts *[]store.Option) (*uns
 	}
 
 	// Apply labels
-	cmLabels, err := c.BuildLabels(value, opts)
+	enrichedLabels, err := labelstore.BuildLabels(value, c.cfg.ImmutableLabels, c.labelsEnricher, opts)
 	if err != nil {
 		return nil, err
 	}
-	obj.SetLabels(cmLabels)
+	obj.SetLabels(slices.MergeMap(obj.GetLabels(), enrichedLabels))
 
 	return obj, nil
 }

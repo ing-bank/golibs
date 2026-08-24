@@ -31,11 +31,6 @@ var SupportedOptions = []store.Option{
 	WithSubResourceOnly,
 }
 
-// BuildLabels builds the complete set of labels for a resource by combining immutable labels and enriched labels.
-func (c *DynamicResource[V]) BuildLabels(obj V, opts *[]store.Option) (map[string]string, error) {
-	return labelstore.BuildLabels(obj, c.cfg.ImmutableLabels, c.labelsEnricher, opts)
-}
-
 // WithSubResourceOnly is an option to operate only on subresources (e.g., status).
 // MatchSubResourceOnly retrieves the subresource-only value from options.
 var WithSubResourceOnly, MatchSubResourceOnly = store.SerializableBoolOptionBuilder("subresource")
