@@ -141,6 +141,13 @@ func (c *DynamicResource[V]) toUnstructured(value V, opts *[]store.Option) (*uns
 		return nil, err
 	}
 
+	if obj.GetKind() == "" {
+		obj.SetKind(c.cfg.Resource)
+	}
+	if obj.GetAPIVersion() == "" {
+		obj.SetAPIVersion(fmt.Sprintf("%s/%s", c.cfg.Group, c.cfg.Version))
+	}
+
 	cmLabels, err := c.BuildLabels(value, opts)
 	if err != nil {
 		return nil, err
