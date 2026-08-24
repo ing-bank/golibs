@@ -61,6 +61,15 @@ func (items *ListItems[K, V]) Keys() []K {
 	})
 }
 
+func (items *ListItems[K, V]) Values() []V {
+	if items == nil {
+		return nil
+	}
+	return slices.Transform(*items, func(item ListItem[K, V]) V {
+		return item.Value
+	})
+}
+
 func (items *ListItems[K, V]) AsMap() map[K]V {
 	if items == nil {
 		return make(map[K]V)
