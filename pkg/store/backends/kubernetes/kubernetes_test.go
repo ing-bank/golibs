@@ -1234,3 +1234,300 @@ func TestDynamicResource_DryRun(t *testing.T) {
 		}
 	})
 }
+
+// TestDynamicResource_LabelBehavior tests comprehensive label behavior:
+// 1. Labels set in the object should be preserved
+// 2. Labels from enricher should override object labels
+// 3. Immutable labels should not be overridable
+func TestDynamicResource_LabelBehavior(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	t.Run("labels_from_object_preserved", func(t *testing.T) {
+		dr := NewFake[*testValue](Config{
+			Namespace: "default",
+			Group:     "",
+			Version:   "v1",
+			Resource:  "testresources",
+		})
+
+		// Create object with labels in metadata
+		val := createTestValue("with-labels", map[string]interface{}{"foo": "bar"})
+		val.ObjectMeta.Labels = map[string]string{
+			"tier":        "frontend",
+			"environment": "test",
+		}
+
+		if err := dr.Create(ctx, "with-labels", val); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		got, err := dr.Read(ctx, "with-labels")
+		if err != nil {
+			t.Fatalf("Read failed: %v", err)
+		}
+
+		// Verify object labels are preserved
+		if got.Labels["tier"] != "frontend" {
+			t.Errorf("expected label tier=frontend, got: %v", got.Labels["tier"])
+		}
+		if got.Labels["environment"] != "test" {
+			t.Errorf("expected label environment=test, got: %v", got.Labels["environment"])
+		}
+	})
+
+	t.Run("enriched_labels_override_object_labels", func(t *testing.T) {
+		// Enricher that adds/overrides labels
+		enricher := func(obj *testValue) (map[string]string, error) {
+			return map[string]string{
+				"tier":    "backend", // This should override the object's "tier"
+				"version": "v2.0",    // This is new
+			}, nil
+		}
+
+		dr := NewFake[*testValue](Config{
+			Namespace: "default",
+			Group:     "",
+			Version:   "v1",
+			Resource:  "testresources",
+		}, WithLabelsEnricher(enricher))
+
+		// Create object with labels
+		val := createTestValue("enriched-override", map[string]interface{}{"foo": "bar"})
+		val.ObjectMeta.Labels = map[string]string{
+			"tier":        "frontend", // Should be overridden
+			"environment": "test",     // Should be preserved
+		}
+
+		if err := dr.Create(ctx, "enriched-override", val); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		got, err := dr.Read(ctx, "enriched-override")
+		if err != nil {
+			t.Fatalf("Read failed: %v", err)
+		}
+
+		// Enricher should have overridden the tier label
+		if got.Labels["tier"] != "backend" {
+			t.Errorf("expected enriched label tier=backend, got: %v", got.Labels["tier"])
+		}
+
+		// New label from enricher should be present
+		if got.Labels["version"] != "v2.0" {
+			t.Errorf("expected new label version=v2.0, got: %v", got.Labels["version"])
+		}
+
+		// Object labels not in enricher should be preserved
+		if got.Labels["environment"] != "test" {
+			t.Errorf("expected preserved label environment=test, got: %v", got.Labels["environment"])
+		}
+	})
+
+	t.Run("custom_labels_option_overrides_object_labels", func(t *testing.T) {
+		dr := NewFake[*testValue](Config{
+			Namespace: "default",
+			Group:     "",
+			Version:   "v1",
+			Resource:  "testresources",
+		})
+
+		// Create object with labels
+		val := createTestValue("custom-labels", map[string]interface{}{"foo": "bar"})
+		val.ObjectMeta.Labels = map[string]string{
+			"tier": "frontend",
+		}
+
+		// Custom labels from WithLabels option should override object labels
+		customLabels := labelstore.Labels{
+			"tier":     "backend",    // Override
+			"priority": "high",       // New
+		}
+
+		if err := dr.Create(ctx, "custom-labels", val, labelstore.WithLabels(customLabels)); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		got, err := dr.Read(ctx, "custom-labels")
+		if err != nil {
+			t.Fatalf("Read failed: %v", err)
+		}
+
+		// Custom label should override object label
+		if got.Labels["tier"] != "backend" {
+			t.Errorf("expected custom label tier=backend, got: %v", got.Labels["tier"])
+		}
+
+		// New custom label should be present
+		if got.Labels["priority"] != "high" {
+			t.Errorf("expected custom label priority=high, got: %v", got.Labels["priority"])
+		}
+	})
+
+	t.Run("immutable_labels_cannot_be_overridden_by_object", func(t *testing.T) {
+		immutable := map[string]string{"app": "myapp"}
+
+		dr := NewFake[*testValue](Config{
+			Namespace:       "default",
+			Group:           "",
+			Version:         "v1",
+			Resource:        "testresources",
+			ImmutableLabels: immutable,
+		})
+
+		// Object tries to set a different value for immutable label
+		val := createTestValue("immutable-conflict-1", map[string]interface{}{"foo": "bar"})
+		val.ObjectMeta.Labels = map[string]string{
+			"app": "differentapp", // Tries to override immutable
+		}
+
+		// Should fail because object tries to override immutable label
+		err := dr.Create(ctx, "immutable-conflict-1", val)
+		if err == nil {
+			t.Errorf("expected error when object tries to override immutable label 'app', got nil")
+		} else if err.Error() != "label app is immutable" {
+			t.Errorf("expected 'label app is immutable' error, got: %v", err)
+		}
+	})
+
+	t.Run("immutable_labels_cannot_be_overridden_by_custom_option", func(t *testing.T) {
+		immutable := map[string]string{"app": "myapp"}
+
+		dr := NewFake[*testValue](Config{
+			Namespace:       "default",
+			Group:           "",
+			Version:         "v1",
+			Resource:        "testresources",
+			ImmutableLabels: immutable,
+		})
+
+		val := createTestValue("immutable-conflict-2", map[string]interface{}{"foo": "bar"})
+
+		// Try to override immutable label using WithLabels option
+		customLabels := labelstore.Labels{
+			"app": "userapp", // Tries to override immutable
+		}
+
+		err := dr.Create(ctx, "immutable-conflict-2", val, labelstore.WithLabels(customLabels))
+		if err == nil {
+			t.Errorf("expected error when WithLabels tries to override immutable label 'app', got nil")
+		} else if err.Error() != "label app is immutable" {
+			t.Errorf("expected 'label app is immutable' error, got: %v", err)
+		}
+	})
+
+	t.Run("immutable_labels_cannot_be_overridden_by_enricher", func(t *testing.T) {
+		immutable := map[string]string{"app": "myapp"}
+
+		// Enricher tries to override immutable label
+		enricher := func(obj *testValue) (map[string]string, error) {
+			return map[string]string{
+				"app": "enricherapp", // Tries to override immutable
+			}, nil
+		}
+
+		dr := NewFake[*testValue](Config{
+			Namespace:       "default",
+			Group:           "",
+			Version:         "v1",
+			Resource:        "testresources",
+			ImmutableLabels: immutable,
+		}, WithLabelsEnricher(enricher))
+
+		val := createTestValue("immutable-conflict-3", map[string]interface{}{"foo": "bar"})
+
+		// Should fail because enricher tries to override immutable label
+		err := dr.Create(ctx, "immutable-conflict-3", val)
+		if err == nil {
+			t.Errorf("expected error when enricher tries to override immutable label 'app', got nil")
+		} else if err.Error() != "label app is immutable" {
+			t.Errorf("expected 'label app is immutable' error, got: %v", err)
+		}
+	})
+
+	t.Run("immutable_labels_combined_with_enricher_and_custom", func(t *testing.T) {
+		immutable := map[string]string{"app": "myapp", "managed": "true"}
+
+		enricher := func(obj *testValue) (map[string]string, error) {
+			return map[string]string{
+				"version":  "v1.0",
+				"enriched": "true",
+			}, nil
+		}
+
+		dr := NewFake[*testValue](Config{
+			Namespace:       "default",
+			Group:           "",
+			Version:         "v1",
+			Resource:        "testresources",
+			ImmutableLabels: immutable,
+		}, WithLabelsEnricher(enricher))
+
+		// Create object with some labels
+		val := createTestValue("multi-labels", map[string]interface{}{"foo": "bar"})
+		val.ObjectMeta.Labels = map[string]string{
+			"tier": "frontend",
+		}
+
+		// Add custom labels without conflicting with immutable
+		customLabels := labelstore.Labels{
+			"environment": "test",
+		}
+
+		if err := dr.Create(ctx, "multi-labels", val, labelstore.WithLabels(customLabels)); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		got, err := dr.Read(ctx, "multi-labels")
+		if err != nil {
+			t.Fatalf("Read failed: %v", err)
+		}
+
+		// Verify all label sources are present
+		expectedLabels := map[string]string{
+			// Immutable labels
+			"app":      "myapp",
+			"managed":  "true",
+			// Enricher labels
+			"version":   "v1.0",
+			"enriched":  "true",
+			// Custom labels
+			"environment": "test",
+			// Object labels
+			"tier": "frontend",
+		}
+
+		for key, expectedVal := range expectedLabels {
+			if got.Labels[key] != expectedVal {
+				t.Errorf("expected label %s=%s, got: %v", key, expectedVal, got.Labels[key])
+			}
+		}
+	})
+
+	t.Run("empty_labels_allowed", func(t *testing.T) {
+		dr := NewFake[*testValue](Config{
+			Namespace: "default",
+			Group:     "",
+			Version:   "v1",
+			Resource:  "testresources",
+		})
+
+		// Create object without any labels
+		val := createTestValue("no-labels", map[string]interface{}{"foo": "bar"})
+
+		if err := dr.Create(ctx, "no-labels", val); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		got, err := dr.Read(ctx, "no-labels")
+		if err != nil {
+			t.Fatalf("Read failed: %v", err)
+		}
+
+		// Labels should be empty (nil or empty map is acceptable)
+		if got.Labels != nil && len(got.Labels) > 0 {
+			t.Errorf("expected empty labels, got: %v", got.Labels)
+		}
+	})
+}
+

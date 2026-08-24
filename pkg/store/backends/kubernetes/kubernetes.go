@@ -148,11 +148,21 @@ func (c *DynamicResource[V]) toUnstructured(value V, opts *[]store.Option) (*uns
 	}
 
 	// Apply labels
-	enrichedLabels, err := labelstore.BuildLabels(value, c.cfg.ImmutableLabels, c.labelsEnricher, opts)
+	currentLabels := obj.GetLabels()
+	enrichedLabels, err := labelstore.BuildLabels(value, c.cfg.ImmutableLabels, func(obj V) (map[string]string, error) {
+		if c.labelsEnricher == nil {
+			return currentLabels, nil
+		}
+		additionalLabels, err := c.labelsEnricher(obj)
+		if err != nil {
+			return nil, err
+		}
+		return slices.MergeMap(currentLabels, additionalLabels), nil
+	}, opts)
 	if err != nil {
 		return nil, err
 	}
-	obj.SetLabels(slices.MergeMap(obj.GetLabels(), enrichedLabels))
+	obj.SetLabels(enrichedLabels)
 
 	return obj, nil
 }
