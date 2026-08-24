@@ -15,7 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	k8syaml "k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/testing"
@@ -127,20 +126,18 @@ func NewBackend[V GenericType](cfg Config) store.Backend[string, V] {
 }
 
 // toUnstructured converts a value to an unstructured object and applies labels.
-// It handles JSON marshaling, decoding, and label enrichment in one step.
+// Uses the native Kubernetes runtime converter for efficient conversion.
+// If kind and apiVersion are not present in the value, they are automatically injected
+// from the configuration.
 func (c *DynamicResource[V]) toUnstructured(value V, opts *[]store.Option) (*unstructured.Unstructured, error) {
-	raw, err := json.Marshal(value)
+	// Use native Kubernetes converter to transform runtime.Object to unstructured map
+	values, err := runtime.DefaultUnstructuredConverter.ToUnstructured(value)
 	if err != nil {
 		return nil, err
 	}
 
-	obj := &unstructured.Unstructured{}
-	dec := k8syaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
-	_, _, err = dec.Decode(raw, nil, obj)
-	if err != nil {
-		return nil, err
-	}
-
+	// Create Unstructured directly from the map
+	obj := &unstructured.Unstructured{Object: values}
 	if obj.GetKind() == "" {
 		obj.SetKind(c.cfg.Resource)
 	}
@@ -148,6 +145,7 @@ func (c *DynamicResource[V]) toUnstructured(value V, opts *[]store.Option) (*uns
 		obj.SetAPIVersion(fmt.Sprintf("%s/%s", c.cfg.Group, c.cfg.Version))
 	}
 
+	// Apply labels
 	cmLabels, err := c.BuildLabels(value, opts)
 	if err != nil {
 		return nil, err
