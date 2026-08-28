@@ -36,8 +36,12 @@ func OptionsToString(opts []store.Option) string {
 }
 
 func (t *Logger[K, V]) Create(ctx context.Context, key K, value V, opts ...store.Option) error {
+	skip, _ := MatchSkipLog(&opts)
 	optionDescription := OptionsToString(opts)
 	err := t.store.Create(ctx, key, value, opts...)
+	if skip {
+		return err
+	}
 	if err != nil {
 		log.WithContext(ctx).WithFields(log.Fields{"key": key, "value": value, "error": err.Error(), "options": optionDescription}).Error("creating store entry failed")
 		return err
@@ -47,8 +51,12 @@ func (t *Logger[K, V]) Create(ctx context.Context, key K, value V, opts ...store
 }
 
 func (t *Logger[K, V]) Read(ctx context.Context, key K, opts ...store.Option) (V, error) {
+	skip, _ := MatchSkipLog(&opts)
 	optionDescription := OptionsToString(opts)
 	item, err := t.store.Read(ctx, key, opts...)
+	if skip {
+		return item, err
+	}
 	if err != nil {
 		log.WithContext(ctx).WithFields(log.Fields{"key": key, "error": err.Error(), "options": optionDescription}).Error("reading store entry failed")
 		return item, err
@@ -58,8 +66,12 @@ func (t *Logger[K, V]) Read(ctx context.Context, key K, opts ...store.Option) (V
 }
 
 func (t *Logger[K, V]) Update(ctx context.Context, key K, value V, opts ...store.Option) error {
+	skip, _ := MatchSkipLog(&opts)
 	optionDescription := OptionsToString(opts)
 	err := t.store.Update(ctx, key, value, opts...)
+	if skip {
+		return err
+	}
 	if err != nil {
 		log.WithContext(ctx).WithFields(log.Fields{"key": key, "value": value, "error": err.Error(), "options": optionDescription}).Error("updating store entry failed")
 		return err
@@ -69,8 +81,12 @@ func (t *Logger[K, V]) Update(ctx context.Context, key K, value V, opts ...store
 }
 
 func (t *Logger[K, V]) Apply(ctx context.Context, key K, value V, opts ...store.Option) error {
+	skip, _ := MatchSkipLog(&opts)
 	optionDescription := OptionsToString(opts)
 	err := t.store.Apply(ctx, key, value, opts...)
+	if skip {
+		return err
+	}
 	if err != nil {
 		log.WithContext(ctx).WithFields(log.Fields{"key": key, "value": value, "error": err.Error(), "options": optionDescription}).Error("applying store entry failed")
 		return err
@@ -80,8 +96,12 @@ func (t *Logger[K, V]) Apply(ctx context.Context, key K, value V, opts ...store.
 }
 
 func (t *Logger[K, V]) Delete(ctx context.Context, key K, opts ...store.Option) error {
+	skip, _ := MatchSkipLog(&opts)
 	optionDescription := OptionsToString(opts)
 	err := t.store.Delete(ctx, key, opts...)
+	if skip {
+		return err
+	}
 	if err != nil {
 		log.WithContext(ctx).WithFields(log.Fields{"key": key, "error": err.Error(), "options": optionDescription}).Error("deleting store entry failed")
 		return err
@@ -91,8 +111,13 @@ func (t *Logger[K, V]) Delete(ctx context.Context, key K, opts ...store.Option) 
 }
 
 func (t *Logger[K, V]) List(ctx context.Context, opts ...store.Option) (store.ListItems[K, V], error) {
+	skip, _ := MatchSkipLog(&opts)
 	optionDescription := OptionsToString(opts)
+
 	items, err := t.store.List(ctx, opts...)
+	if skip {
+		return items, err
+	}
 	if err != nil {
 		log.WithContext(ctx).WithFields(log.Fields{"error": err.Error(), "options": optionDescription}).Error("listing store entries failed")
 		return items, err
