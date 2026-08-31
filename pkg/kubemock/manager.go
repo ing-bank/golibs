@@ -36,7 +36,7 @@ func NewManager(cfg *rest.Config, opts ctrl.Options, initObjs ...runtime.Object)
 
 	_ = corev1.AddToScheme(opts.Scheme)
 
-	fakeClient := NewFakeControllerRuntimeClient(initObjs...)
+	fakeClient := NewControllerRuntimeClientFromFakeClient(NewFakeClient(), opts.Scheme, defaultRESTMapperForScheme(opts.Scheme), initObjs...)
 	cacheClient := newFakeCache(fakeClient)
 	eventClient := &fakeEventingClient{Client: fakeClient, cache: cacheClient}
 
