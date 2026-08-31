@@ -123,6 +123,49 @@ func TestErrorConditions(t *testing.T) {
 			t.Errorf("expected ErrUnsupportedOption, got: %v", err)
 		}
 	})
+
+	t.Run("create_key_name_mismatch", func(t *testing.T) {
+		val := createTestValue("k8s-name", map[string]interface{}{"data": "value"})
+		err := dr.Create(ctx, "store-key", val)
+		if err == nil {
+			t.Fatalf("expected error for mismatched key and metadata.name")
+		}
+		if !strings.Contains(err.Error(), "does not match metadata.name") {
+			t.Fatalf("expected key/name mismatch error, got: %v", err)
+		}
+	})
+
+	t.Run("update_key_name_mismatch", func(t *testing.T) {
+		seed := createTestValue("item-1", map[string]interface{}{"data": "value"})
+		if err := dr.Create(ctx, "item-1", seed); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		mismatch := createTestValue("other-name", map[string]interface{}{"data": "updated"})
+		err := dr.Update(ctx, "item-1", mismatch)
+		if err == nil {
+			t.Fatalf("expected error for mismatched key and metadata.name")
+		}
+		if !strings.Contains(err.Error(), "does not match metadata.name") {
+			t.Fatalf("expected key/name mismatch error, got: %v", err)
+		}
+	})
+
+	t.Run("apply_key_name_mismatch", func(t *testing.T) {
+		seed := createTestValue("item-2", map[string]interface{}{"data": "value"})
+		if err := dr.Create(ctx, "item-2", seed); err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		mismatch := createTestValue("other-name", map[string]interface{}{"data": "updated"})
+		err := dr.Apply(ctx, "item-2", mismatch)
+		if err == nil {
+			t.Fatalf("expected error for mismatched key and metadata.name")
+		}
+		if !strings.Contains(err.Error(), "does not match metadata.name") {
+			t.Fatalf("expected key/name mismatch error, got: %v", err)
+		}
+	})
 }
 
 // TestAllKubernetesResourceTypes tests all major Kubernetes resource types with loops

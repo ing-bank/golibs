@@ -173,8 +173,8 @@ func (c *DynamicResource[V]) Create(ctx context.Context, key string, value V, op
 	if err != nil {
 		return err
 	}
-	if key != "" {
-		obj.SetName(key)
+	if err := validateKeyMatchesName(key, obj); err != nil {
+		return err
 	}
 	opt, err := buildCreateOptions(opts)
 	if err != nil {
@@ -229,17 +229,20 @@ func (c *DynamicResource[V]) Update(ctx context.Context, key string, value V, op
 	if err != nil {
 		return err
 	}
+	if err := validateKeyMatchesName(key, obj); err != nil {
+		return err
+	}
 	opt, err := buildUpdateOptions(opts)
 	if err != nil {
 		return err
 	}
-	return c.update(ctx, obj, UpdateOption{
+	return c.update(ctx, key, obj, UpdateOption{
 		DryRun:          opt.DryRun,
 		SubResourceOnly: opt.SubResourceOnly,
 	})
 }
 
-func (c *DynamicResource[V]) update(ctx context.Context, obj *unstructured.Unstructured, opt UpdateOption) error {
+func (c *DynamicResource[V]) update(ctx context.Context, key string, obj *unstructured.Unstructured, opt UpdateOption) error {
 	// If SubResourceOnly is set, only update the status subresource.
 	// This is required for CRDs with status subresource enabled.
 	if opt.SubResourceOnly {
@@ -260,6 +263,9 @@ func (c *DynamicResource[V]) update(ctx context.Context, obj *unstructured.Unstr
 func (c *DynamicResource[V]) Apply(ctx context.Context, key string, value V, opts ...store.Option) error {
 	obj, err := c.toUnstructured(value, &opts)
 	if err != nil {
+		return err
+	}
+	if err := validateKeyMatchesName(key, obj); err != nil {
 		return err
 	}
 	opt, err := buildApplyOptions(opts)
@@ -297,7 +303,7 @@ func (c *DynamicResource[V]) apply(ctx context.Context, key string, obj *unstruc
 	if opt.ResolveConflict {
 		obj.SetResourceVersion(existing.GetResourceVersion())
 	}
-	return c.update(ctx, obj, UpdateOption{
+	return c.update(ctx, key, obj, UpdateOption{
 		DryRun:          opt.DryRun,
 		SubResourceOnly: opt.SubResourceOnly,
 	})
@@ -356,4 +362,18 @@ func (c *DynamicResource[V]) List(ctx context.Context, opts ...store.Option) (st
 	}
 
 	return items, nil
+}
+
+func validateKeyMatchesName(key string, obj *unstructured.Unstructured) error {
+	if key == "" || obj == nil {
+		return nil
+	}
+	if obj.GetName() == "" {
+		obj.SetName(key)
+		return nil
+	}
+	if key != obj.GetName() {
+		return fmt.Errorf("key %q does not match metadata.name %q", key, obj.GetName())
+	}
+	return nil
 }
