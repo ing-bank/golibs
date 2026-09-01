@@ -33,10 +33,24 @@ func NewManager(cfg *rest.Config, opts ctrl.Options, initObjs ...runtime.Object)
 	if opts.Scheme == nil {
 		opts.Scheme = clientgoscheme.Scheme
 	}
-
 	_ = corev1.AddToScheme(opts.Scheme)
-
 	fakeClient := NewControllerRuntimeClientFromFakeClient(NewFakeClient(), opts.Scheme, defaultRESTMapperForScheme(opts.Scheme), initObjs...)
+	return NewManagerWithClient(cfg, opts, fakeClient)
+}
+
+// NewManagerWithClient builds a controller-runtime manager around an injected fake client.
+func NewManagerWithClient(cfg *rest.Config, opts ctrl.Options, fakeClient client.Client) (ctrl.Manager, error) {
+	if cfg == nil {
+		cfg = &rest.Config{Host: "https://fake.invalid"}
+	}
+	if opts.Scheme == nil {
+		opts.Scheme = clientgoscheme.Scheme
+	}
+	_ = corev1.AddToScheme(opts.Scheme)
+	if fakeClient == nil {
+		fakeClient = NewControllerRuntimeClientFromFakeClient(NewFakeClient(), opts.Scheme, defaultRESTMapperForScheme(opts.Scheme))
+	}
+
 	cacheClient := newFakeCache(fakeClient)
 	eventClient := &fakeEventingClient{Client: fakeClient, cache: cacheClient}
 
@@ -54,9 +68,45 @@ func NewManager(cfg *rest.Config, opts ctrl.Options, initObjs ...runtime.Object)
 	return ctrl.NewManager(cfg, opts)
 }
 
+// NewManagerWithSharedFake builds a controller-runtime manager that reuses the same in-memory
+// object tracker and cache as a shared fake instance.
+func NewManagerWithSharedFake(cfg *rest.Config, opts ctrl.Options, shared *SharedFake) (ctrl.Manager, error) {
+	if cfg == nil {
+		cfg = &rest.Config{Host: "https://fake.invalid"}
+	}
+	if shared == nil {
+		shared = NewSharedFake(opts.Scheme)
+	}
+	if opts.Scheme == nil {
+		opts.Scheme = shared.scheme
+	}
+	_ = corev1.AddToScheme(opts.Scheme)
+	if shared.cache == nil {
+		shared.cache = newFakeCache(shared.client)
+	}
+	if shared.client == nil {
+		shared.client = NewControllerRuntimeClientFromFakeClient(NewFakeClient(), opts.Scheme, defaultRESTMapperForScheme(opts.Scheme))
+		shared.cache = newFakeCache(shared.client)
+	}
+
+	eventClient := &fakeEventingClient{Client: shared.client, cache: shared.cache}
+	opts.NewClient = func(_ *rest.Config, _ client.Options) (client.Client, error) {
+		return eventClient, nil
+	}
+	opts.NewCache = func(_ *rest.Config, _ ctrlcache.Options) (ctrlcache.Cache, error) {
+		return shared.cache, nil
+	}
+	opts.LeaderElection = false
+	opts.Metrics = metricsserver.Options{BindAddress: "0"}
+	opts.HealthProbeBindAddress = "0"
+	opts.PprofBindAddress = "0"
+
+	return ctrl.NewManager(cfg, opts)
+}
+
 type fakeCache struct {
-	mu       sync.Mutex
-	client   client.Client
+	mu        sync.Mutex
+	client    client.Client
 	informers map[schema.GroupVersionKind]*fakeInformer
 }
 
@@ -142,9 +192,9 @@ func objectGVK(c client.Client, obj client.Object) (schema.GroupVersionKind, err
 }
 
 type fakeInformer struct {
-	mu      sync.Mutex
-	gvk     schema.GroupVersionKind
-	objects map[string]interface{}
+	mu       sync.Mutex
+	gvk      schema.GroupVersionKind
+	objects  map[string]interface{}
 	handlers []toolscache.ResourceEventHandler
 }
 
@@ -185,9 +235,13 @@ func (i *fakeInformer) addHandler(handler toolscache.ResourceEventHandler) (tool
 		return nil, fmt.Errorf("nil event handler")
 	}
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	i.handlers = append(i.handlers, handler)
+	objects := make([]interface{}, 0, len(i.objects))
 	for _, obj := range i.objects {
+		objects = append(objects, obj)
+	}
+	i.mu.Unlock()
+	for _, obj := range objects {
 		handler.OnAdd(obj, false)
 	}
 	return &fakeResourceEventHandlerRegistration{informer: i, handler: handler}, nil
@@ -195,8 +249,9 @@ func (i *fakeInformer) addHandler(handler toolscache.ResourceEventHandler) (tool
 
 func (i *fakeInformer) emit(eventType string, obj interface{}, oldObj interface{}) {
 	i.mu.Lock()
-	defer i.mu.Unlock()
-	for _, handler := range i.handlers {
+	handlers := append([]toolscache.ResourceEventHandler(nil), i.handlers...)
+	i.mu.Unlock()
+	for _, handler := range handlers {
 		switch eventType {
 		case "add":
 			handler.OnAdd(obj, false)
@@ -290,18 +345,39 @@ func (c *fakeEventingClient) Patch(ctx context.Context, obj client.Object, patch
 }
 
 func (c *fakeEventingClient) notify(eventType string, obj interface{}, oldObj interface{}) {
-	if c == nil || c.cache == nil || obj == nil {
+	if c == nil || c.cache == nil {
 		return
 	}
-	typed, ok := obj.(client.Object)
-	if !ok {
+	c.cache.notify(eventType, obj, oldObj)
+}
+
+func (f fakeDoneChecker) Name() string { return "kubemock-fake-informer" }
+func (f fakeDoneChecker) Done() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+func (c *fakeCache) notify(eventType string, obj interface{}, oldObj interface{}) {
+	if c == nil || obj == nil {
 		return
 	}
-	gvk, err := objectGVK(c, typed)
-	if err != nil {
+	var gvk schema.GroupVersionKind
+	if typed, ok := obj.(client.Object); ok {
+		var err error
+		gvk, err = objectGVK(c.client, typed)
+		if err != nil {
+			if runtimeObj, ok := obj.(runtime.Object); ok {
+				gvk = runtimeObj.GetObjectKind().GroupVersionKind()
+			}
+		}
+	} else if runtimeObj, ok := obj.(runtime.Object); ok {
+		gvk = runtimeObj.GetObjectKind().GroupVersionKind()
+	}
+	if gvk.Empty() {
 		return
 	}
-	informer := c.cache.getInformer(gvk)
+	informer := c.getInformer(gvk)
 	switch eventType {
 	case "add":
 		informer.storeObject(obj)
@@ -313,11 +389,4 @@ func (c *fakeEventingClient) notify(eventType string, obj interface{}, oldObj in
 		informer.deleteObject(obj)
 		informer.emit("delete", obj, nil)
 	}
-}
-
-func (f fakeDoneChecker) Name() string { return "kubemock-fake-informer" }
-func (f fakeDoneChecker) Done() <-chan struct{} {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
 }
