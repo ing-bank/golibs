@@ -147,3 +147,41 @@ func TestNewFakeManager_UsesCustomScheme(t *testing.T) {
 	require.Equal(t, "demo", stored.Name)
 	require.Equal(t, "ok", stored.Spec)
 }
+
+func TestNewFakeManager_IncrementsGenerationOnCreateAndApply(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	mgr, err := NewManager(nil, ctrl.Options{Scheme: scheme})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: "default",
+		},
+		Data: map[string]string{"k": "v"},
+	}
+
+	require.NoError(t, mgr.GetClient().Create(ctx, cm))
+	require.EqualValues(t, 1, cm.Generation)
+
+	cm.Data["k"] = "updated"
+	require.NoError(t, mgr.GetClient().Update(ctx, cm))
+	require.EqualValues(t, 2, cm.Generation)
+
+	patched := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: "default",
+		},
+		Data: map[string]string{"k": "patched"},
+	}
+	require.NoError(t, mgr.GetClient().Patch(ctx, patched, client.Apply, &client.PatchOptions{FieldManager: "kubemock-test"}))
+
+	var stored corev1.ConfigMap
+	require.NoError(t, mgr.GetClient().Get(ctx, client.ObjectKey{Namespace: "default", Name: "demo"}, &stored))
+	require.EqualValues(t, 3, stored.Generation)
+}

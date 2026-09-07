@@ -304,9 +304,128 @@ func (f *fakeResourceEventHandlerRegistration) HasSyncedChecker() toolscache.Don
 
 type fakeDoneChecker struct{}
 
+func (f fakeDoneChecker) Name() string { return "kubemock-fake-informer" }
+func (f fakeDoneChecker) Done() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
 type fakeEventingClient struct {
 	client.Client
 	cache *fakeCache
+}
+
+func (c *fakeEventingClient) Status() client.SubResourceWriter {
+	if c == nil || c.Client == nil {
+		return nil
+	}
+	return &fakeSubResourceWriter{SubResourceWriter: c.Client.Status(), cache: c.cache}
+}
+
+func (c *fakeEventingClient) SubResource(subResource string) client.SubResourceClient {
+	if c == nil || c.Client == nil {
+		return nil
+	}
+	return &fakeSubResourceClient{SubResourceClient: c.Client.SubResource(subResource), cache: c.cache}
+}
+
+// fakeSubResourceWriter wraps status/subresource writes so informer caches observe
+// subresource updates as normal object updates.
+type fakeSubResourceWriter struct {
+	client.SubResourceWriter
+	cache *fakeCache
+}
+
+func (w *fakeSubResourceWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	if obj == nil {
+		return w.SubResourceWriter.Update(ctx, obj, opts...)
+	}
+	before := obj.DeepCopyObject()
+	if err := w.SubResourceWriter.Update(ctx, obj, opts...); err != nil {
+		return err
+	}
+	if w != nil && w.cache != nil {
+		w.cache.notify("update", obj, before)
+	}
+	return nil
+}
+
+func (w *fakeSubResourceWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	if obj == nil {
+		return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
+	}
+	before := obj.DeepCopyObject()
+	if err := w.SubResourceWriter.Patch(ctx, obj, patch, opts...); err != nil {
+		return err
+	}
+	if w != nil && w.cache != nil {
+		w.cache.notify("update", obj, before)
+	}
+	return nil
+}
+
+func (w *fakeSubResourceWriter) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	if err := w.SubResourceWriter.Create(ctx, obj, subResource, opts...); err != nil {
+		return err
+	}
+	if w != nil && w.cache != nil && obj != nil {
+		w.cache.notify("update", obj, nil)
+	}
+	return nil
+}
+
+func (w *fakeSubResourceWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return w.SubResourceWriter.Apply(ctx, obj, opts...)
+}
+
+// fakeSubResourceClient wraps named subresources (e.g. status) so they emit
+// update events to the in-memory informer cache.
+type fakeSubResourceClient struct {
+	client.SubResourceClient
+	cache *fakeCache
+}
+
+func (c *fakeSubResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	if obj == nil {
+		return c.SubResourceClient.Update(ctx, obj, opts...)
+	}
+	before := obj.DeepCopyObject()
+	if err := c.SubResourceClient.Update(ctx, obj, opts...); err != nil {
+		return err
+	}
+	if c != nil && c.cache != nil {
+		c.cache.notify("update", obj, before)
+	}
+	return nil
+}
+
+func (c *fakeSubResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	if obj == nil {
+		return c.SubResourceClient.Patch(ctx, obj, patch, opts...)
+	}
+	before := obj.DeepCopyObject()
+	if err := c.SubResourceClient.Patch(ctx, obj, patch, opts...); err != nil {
+		return err
+	}
+	if c != nil && c.cache != nil {
+		c.cache.notify("update", obj, before)
+	}
+	return nil
+}
+
+func (c *fakeSubResourceClient) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	if err := c.SubResourceClient.Create(ctx, obj, subResource, opts...); err != nil {
+		return err
+	}
+	if c != nil && c.cache != nil && obj != nil {
+		c.cache.notify("update", obj, nil)
+	}
+	return nil
+}
+
+func (c *fakeSubResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return c.SubResourceClient.Apply(ctx, obj, opts...)
 }
 
 func (c *fakeEventingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
@@ -344,18 +463,8 @@ func (c *fakeEventingClient) Patch(ctx context.Context, obj client.Object, patch
 	return nil
 }
 
-func (c *fakeEventingClient) notify(eventType string, obj interface{}, oldObj interface{}) {
-	if c == nil || c.cache == nil {
-		return
-	}
-	c.cache.notify(eventType, obj, oldObj)
-}
-
-func (f fakeDoneChecker) Name() string { return "kubemock-fake-informer" }
-func (f fakeDoneChecker) Done() <-chan struct{} {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
+func (c *fakeEventingClient) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
+	return c.Client.DeleteAllOf(ctx, obj, opts...)
 }
 
 func (c *fakeCache) notify(eventType string, obj interface{}, oldObj interface{}) {
@@ -389,4 +498,11 @@ func (c *fakeCache) notify(eventType string, obj interface{}, oldObj interface{}
 		informer.deleteObject(obj)
 		informer.emit("delete", obj, nil)
 	}
+}
+
+func (c *fakeEventingClient) notify(eventType string, obj interface{}, oldObj interface{}) {
+	if c == nil || c.cache == nil {
+		return
+	}
+	c.cache.notify(eventType, obj, oldObj)
 }
