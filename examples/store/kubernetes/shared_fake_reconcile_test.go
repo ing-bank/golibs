@@ -61,7 +61,7 @@ func TestSharedFakeStoreTriggersManagerReconcile(t *testing.T) {
 	require.NoError(t, err)
 
 	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "clusters"}
-	resource := shared.ResourceClient(gvr, "default")
+	resource := shared.DynamicClient().Resource(gvr)
 	store, err := kubernetes.New[*sharedFakeCluster](kubernetes.Config{
 		Namespace: "default",
 		Group:     "example.com",
@@ -156,7 +156,7 @@ func TestSharedFakeStoreStatusSubresourceTriggersManagerReconcile(t *testing.T) 
 	require.NoError(t, err)
 
 	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "clusters"}
-	resource := shared.ResourceClient(gvr, "default")
+	resource := shared.DynamicClient().Resource(gvr)
 	store, err := kubernetes.New[*sharedFakeCluster](kubernetes.Config{
 		Namespace: "default",
 		Group:     "example.com",

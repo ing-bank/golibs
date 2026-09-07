@@ -1383,8 +1383,8 @@ func TestDynamicResource_LabelBehavior(t *testing.T) {
 
 		// Custom labels from WithLabels option should override object labels
 		customLabels := labelstore.Labels{
-			"tier":     "backend",    // Override
-			"priority": "high",       // New
+			"tier":     "backend", // Override
+			"priority": "high",    // New
 		}
 
 		if err := dr.Create(ctx, "custom-labels", val, labelstore.WithLabels(customLabels)); err != nil {
@@ -1529,11 +1529,11 @@ func TestDynamicResource_LabelBehavior(t *testing.T) {
 		// Verify all label sources are present
 		expectedLabels := map[string]string{
 			// Immutable labels
-			"app":      "myapp",
-			"managed":  "true",
+			"app":     "myapp",
+			"managed": "true",
 			// Enricher labels
-			"version":   "v1.0",
-			"enriched":  "true",
+			"version":  "v1.0",
+			"enriched": "true",
 			// Custom labels
 			"environment": "test",
 			// Object labels
@@ -1574,3 +1574,161 @@ func TestDynamicResource_LabelBehavior(t *testing.T) {
 	})
 }
 
+func TestDynamicNamespaceEncoding(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	dr := NewFake[*v1.ConfigMap](Config{
+		Namespace: "",
+		Group:     "",
+		Version:   "v1",
+		Resource:  "configmaps",
+	})
+
+	items := []struct {
+		key       string
+		namespace string
+		name      string
+	}{
+		{key: "team-a/demo", namespace: "team-a", name: "demo"},
+		{key: "team-b/other", namespace: "team-b", name: "other"},
+	}
+
+	for _, tc := range items {
+		obj := &v1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      tc.name,
+				Namespace: tc.namespace,
+			},
+			Data: map[string]string{"value": tc.name},
+		}
+		if err := dr.Create(ctx, tc.key, obj); err != nil {
+			t.Fatalf("Create(%q) failed: %v", tc.key, err)
+		}
+
+		got, err := dr.Read(ctx, tc.key)
+		if err != nil {
+			t.Fatalf("Read(%q) failed: %v", tc.key, err)
+		}
+		if got.Name != tc.name || got.Namespace != tc.namespace {
+			t.Fatalf("Read(%q) = %s/%s, want %s/%s", tc.key, got.Namespace, got.Name, tc.namespace, tc.name)
+		}
+	}
+
+	listed, err := dr.List(ctx)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(listed) != len(items) {
+		t.Fatalf("expected %d items, got %d: %#v", len(items), len(listed), listed)
+	}
+
+	seen := map[string]bool{}
+	for _, item := range listed {
+		seen[item.Key] = true
+	}
+	for _, tc := range items {
+		if !seen[tc.key] {
+			t.Fatalf("missing list key %q in %#v", tc.key, listed)
+		}
+	}
+
+	updated := &v1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: "team-a",
+		},
+		Data: map[string]string{"value": "updated"},
+	}
+	if err := dr.Update(ctx, "team-a/demo", updated); err != nil {
+		t.Fatalf("Update(%q) failed: %v", "team-a/demo", err)
+	}
+
+	if err := dr.Delete(ctx, "team-b/other"); err != nil {
+		t.Fatalf("Delete(%q) failed: %v", "team-b/other", err)
+	}
+
+	if listed, err = dr.List(ctx); err != nil {
+		t.Fatalf("List after delete failed: %v", err)
+	} else if len(listed) != 1 || listed[0].Key != "team-a/demo" {
+		t.Fatalf("expected only team-a/demo remaining, got %#v", listed)
+	}
+}
+
+func TestDynamicResource_WithNamespaceListFilter(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	dr := NewFake[*v1.ConfigMap](Config{
+		Group:    "",
+		Version:  "v1",
+		Resource: "configmaps",
+	})
+
+	for _, tc := range []struct {
+		key string
+		obj *v1.ConfigMap
+	}{
+		{key: "team-a/app", obj: &v1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "team-a"}}},
+		{key: "team-b/worker", obj: &v1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "team-b"}}},
+	} {
+		if err := dr.Create(ctx, tc.key, tc.obj); err != nil {
+			t.Fatalf("create(%q): %v", tc.key, err)
+		}
+	}
+
+	items, err := dr.List(ctx, WithNamespace("team-a"))
+	if err != nil {
+		t.Fatalf("list namespace team-a: %v", err)
+	}
+	if len(items) != 1 || items[0].Key != "team-a/app" {
+		t.Fatalf("expected only team-a/app, got %#v", items)
+	}
+}
+
+func TestDynamicResource_UsesConfigNamespaceWhenSet(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	dr := NewFake[*v1.ConfigMap](Config{
+		Namespace: "default",
+		Group:     "",
+		Version:   "v1",
+		Resource:  "configmaps",
+	})
+
+	if err := dr.Create(ctx, "demo", &v1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}); err != nil {
+		t.Fatalf("create default namespace object: %v", err)
+	}
+
+	got, err := dr.Read(ctx, "demo")
+	if err != nil {
+		t.Fatalf("read default namespace object: %v", err)
+	}
+	if got.Name != "demo" {
+		t.Fatalf("expected demo, got %q", got.Name)
+	}
+}
+
+func TestDynamicResource_EmptyNamespaceMeansClusterScopedOrAllNamespaces(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	dr := NewFake[*v1.Namespace](Config{
+		Group:    "",
+		Version:  "v1",
+		Resource: "namespaces",
+	})
+
+	if err := dr.Create(ctx, "cluster-a", &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}); err != nil {
+		t.Fatalf("create cluster-scoped object: %v", err)
+	}
+
+	got, err := dr.Read(ctx, "cluster-a")
+	if err != nil {
+		t.Fatalf("read cluster-scoped object: %v", err)
+	}
+	if got.Name != "cluster-a" {
+		t.Fatalf("expected cluster-a, got %q", got.Name)
+	}
+}

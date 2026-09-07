@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ing-bank/golibs/pkg/config"
+	"github.com/ing-bank/golibs/pkg/errors"
 	"github.com/ing-bank/golibs/pkg/store"
 	labelstore "github.com/ing-bank/golibs/pkg/store/backends/labels"
 )
@@ -24,12 +25,17 @@ func WithLabelsEnricher[V GenericType](enricher LabelsEnricher[V]) config.Option
 var SupportedOptions = []store.Option{
 	labelstore.WithLabelSelector,
 	labelstore.WithLabels,
+	WithNamespace,
 	store.WithDryRun,   // Only for mutating calls
 	store.WithPrefix,   // Only for list calls, not for Create/Update/Delete (for that use the prefix middleware)
 	store.ListKeysOnly, // Only for list calls, leaves values empty
 	WithResolveConflict,
 	WithSubResourceOnly,
 }
+
+// WithNamespace restricts a list operation to a namespace when the backend is configured in dynamic mode.
+// MatchNamespace retrieves the configured namespace from options.
+var WithNamespace, MatchNamespace = store.SerializableStringOptionBuilder("namespace")
 
 // WithSubResourceOnly is an option to operate only on subresources (e.g., status).
 // MatchSubResourceOnly retrieves the subresource-only value from options.
@@ -64,6 +70,7 @@ type ApplyOption struct {
 type ListOption struct {
 	LabelSelector string
 	ListKeysOnly  bool
+	Namespace     string
 	Prefix        string
 }
 
@@ -149,6 +156,7 @@ func (c *DynamicResource[V]) buildListOptions(opts []store.Option) (ListOption, 
 	if len(opts) == 0 {
 		return ListOption{}, nil
 	}
+	namespace, _ := MatchNamespace(&opts)
 	prefix, _ := store.MatchPrefix(&opts)
 	listKeyOnly, _ := store.MatchListKeyOnly(&opts)
 	selector, _ := labelstore.MatchLabelSelector(&opts)
@@ -156,8 +164,15 @@ func (c *DynamicResource[V]) buildListOptions(opts []store.Option) (ListOption, 
 	if err != nil {
 		return ListOption{}, fmt.Errorf("failed to parse label selector: %w", err)
 	}
+	if c.cfg.Namespace != "" && namespace != "" && c.cfg.Namespace != namespace {
+		return ListOption{}, fmt.Errorf("%w: cannot list in namespace %q when store is configured with fixed namespace %q", errors.ErrBadRequest, namespace, c.cfg.Namespace)
+	}
+	if namespace == "" && c.cfg.Namespace != "" {
+		namespace = c.cfg.Namespace
+	}
 
 	o := ListOption{
+		Namespace:     namespace,
 		Prefix:        prefix,
 		LabelSelector: labelSelector.String(),
 		ListKeysOnly:  listKeyOnly,

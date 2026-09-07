@@ -6,6 +6,7 @@ import (
 
 	"github.com/ing-bank/golibs/pkg/errors"
 	"github.com/ing-bank/golibs/pkg/store"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -133,4 +134,62 @@ func TestCachedDynamicResource_Read(t *testing.T) {
 			t.Errorf("expected ErrUnsupportedOption, got: %v", err)
 		}
 	})
+}
+
+func TestCachedDynamicResource_DynamicNamespaceEncoding(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	defaultItem := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name":      "demo",
+			"namespace": "default",
+		},
+		"data": map[string]interface{}{"value": "default"},
+	}}
+	teamItem := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name":      "release",
+			"namespace": "team-a",
+		},
+		"data": map[string]interface{}{"value": "team"},
+	}}
+
+	cached := NewCachedFake[*v1.ConfigMap](CachedConfig{
+		Config: Config{
+			Group:    "",
+			Version:  "v1",
+			Resource: "configmaps",
+		},
+		WaitForCacheToSync: true,
+	}, defaultItem, teamItem)
+	defer cached.Stop()
+
+	got, err := cached.Read(ctx, "team-a/release")
+	if err != nil {
+		t.Fatalf("Read encoded cached key failed: %v", err)
+	}
+	if got.Name != "release" || got.Namespace != "team-a" {
+		t.Fatalf("Read encoded cached key = %s/%s, want team-a/release", got.Namespace, got.Name)
+	}
+
+	items, err := cached.List(ctx)
+	if err != nil {
+		t.Fatalf("List from cache failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 cached items, got %d: %#v", len(items), items)
+	}
+
+	seen := map[string]bool{}
+	for _, item := range items {
+		seen[item.Key] = true
+	}
+	if !seen["default/demo"] || !seen["team-a/release"] {
+		t.Fatalf("cached list keys mismatch: %#v", items)
+	}
 }

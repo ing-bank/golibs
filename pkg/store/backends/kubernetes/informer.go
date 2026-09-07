@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ing-bank/golibs/pkg/store"
@@ -45,7 +46,7 @@ func newCachedStore[V GenericType](cfg CachedConfig, dynClient dynamic.Interface
 	}
 
 	// Create the base DynamicResource
-	baseStore, err := New[V](cfg.Config, dynClient.Resource(gvr).Namespace(cfg.Namespace))
+	baseStore, err := New[V](cfg.Config, dynClient.Resource(gvr))
 	if err != nil {
 		return nil, err
 	}
@@ -151,15 +152,24 @@ func (c *CachedDynamicResource[V]) Stop() {
 	}
 }
 
-// NamespaceKeyFunc constructs a key based on whether resource is namespaced or cluster-scoped
+// NamespaceKeyFunc constructs a key based on whether resource is namespaced or cluster-scoped.
 //
-//	For namespaced resources: "namespace/name"
-//	For cluster-scoped resources: "name"
+// For namespaced resources: "namespace/name"
+// For cluster-scoped resources: "name"
+// See ADR-0002-kubernetes-store-namespace-mode.md for the key semantics.
 func NamespaceKeyFunc(namespace, name string) string {
 	if namespace != "" {
 		return namespace + "/" + name
 	}
 	return name
+}
+
+func KeyNamespaceNameFunc(key string) (string, string) {
+	namespace, name, ok := strings.Cut(key, "/")
+	if !ok {
+		return "", key
+	}
+	return namespace, name
 }
 
 // Read reads from the local cache instead of the API server
@@ -175,7 +185,8 @@ func (c *CachedDynamicResource[V]) Read(ctx context.Context, key string, opts ..
 		return c.DynamicResource.Read(ctx, key, opts...)
 	}
 
-	cacheKey := NamespaceKeyFunc(c.cfg.Namespace, key)
+	namespace, name := KeyNamespaceNameFunc(key)
+	cacheKey := NamespaceKeyFunc(namespace, name)
 
 	// Get from cache using the informer's indexer
 	item, exists, err := c.informer.GetIndexer().GetByKey(cacheKey)
@@ -240,7 +251,7 @@ func (c *CachedDynamicResource[V]) List(ctx context.Context, opts ...store.Optio
 		}
 
 		result = append(result, store.ListItem[string, V]{
-			Key:   unstructuredObj.GetName(),
+			Key:   c.DynamicResource.keyFromObj(unstructuredObj),
 			Value: value,
 		})
 	}

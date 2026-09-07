@@ -28,6 +28,8 @@ var _ store.Store[string, *v1.ConfigMap] = &DynamicResource[*v1.ConfigMap]{}
 // Config configures a Kubernetes dynamic resource store backend.
 // It specifies the resource type (GVR) and namespace to operate on, plus optional immutable labels.
 type Config struct {
+	// Optional fixed namespace. When set, all operations target that namespace.
+	// When empty, the store runs in dynamic all-namespaces mode and namespaced keys are encoded as namespace/name.
 	Namespace string `json:"namespace" yaml:"namespace"`
 	Group     string `json:"group" yaml:"group"`
 	Version   string `json:"version" yaml:"version"`
@@ -53,15 +55,16 @@ type GenericType runtime.Object
 
 // DynamicResource is a generic Kubernetes store backend that uses the dynamic client.
 // It supports CRUD operations and server-side apply for any Kubernetes resource type.
+// See ADR-0002-kubernetes-store-namespace-mode.md for the namespace/key semantics.
 type DynamicResource[V GenericType] struct {
-	client         dynamic.ResourceInterface
+	client         dynamic.NamespaceableResourceInterface
 	cfg            Config
 	labelsEnricher LabelsEnricher[V]
 }
 
 // New creates a new DynamicResource store backend with the given configuration and client.
 // The client should be configured for the specific resource type (GVR) and namespace.
-func New[V GenericType](cfg Config, client dynamic.ResourceInterface, opts ...Option[V]) (*DynamicResource[V], error) {
+func New[V GenericType](cfg Config, client dynamic.NamespaceableResourceInterface, opts ...Option[V]) (*DynamicResource[V], error) {
 	dyn := &DynamicResource[V]{
 		client: client,
 		cfg:    cfg,
@@ -91,7 +94,7 @@ func NewFake[V GenericType](cfg Config, opts ...Option[V]) *DynamicResource[V] {
 	tracker, _ := fakeClient.Tracker().(testing.ObjectTracker)
 	fakeClient.Fake.PrependReactor("*", "*", kubemock.DryRunReactor(tracker))
 
-	dyn, err := New[V](cfg, fakeClient.Resource(gvr).Namespace(cfg.Namespace), opts...)
+	dyn, err := New[V](cfg, fakeClient.Resource(gvr), opts...)
 	if err != nil {
 		panic(err)
 	}
@@ -101,7 +104,6 @@ func NewFake[V GenericType](cfg Config, opts ...Option[V]) *DynamicResource[V] {
 // NewForConfig creates a new DynamicResource using the default kubeconfig.
 // It automatically discovers the cluster configuration and creates the necessary clients.
 func NewForConfig[V GenericType](cfg Config) (*DynamicResource[V], error) {
-
 	kubeconfig, err := ctrl.GetConfig()
 	if err != nil {
 		return nil, fmt.Errorf("could not get kubeconfig: %w", err)
@@ -116,7 +118,7 @@ func NewForConfig[V GenericType](cfg Config) (*DynamicResource[V], error) {
 		Version:  cfg.Version,
 		Resource: cfg.Resource,
 	}
-	return New[V](cfg, dyn.Resource(gvr).Namespace(cfg.Namespace))
+	return New[V](cfg, dyn.Resource(gvr))
 }
 
 // NewBackend creates a store.Backend factory function for the given configuration.
@@ -146,6 +148,9 @@ func (c *DynamicResource[V]) toUnstructured(value V, opts *[]store.Option) (*uns
 	if obj.GetAPIVersion() == "" {
 		obj.SetAPIVersion(fmt.Sprintf("%s/%s", c.cfg.Group, c.cfg.Version))
 	}
+	if obj.GetNamespace() == "" && c.cfg.Namespace != "" {
+		obj.SetNamespace(c.cfg.Namespace)
+	}
 
 	// Apply labels
 	currentLabels := obj.GetLabels()
@@ -167,15 +172,80 @@ func (c *DynamicResource[V]) toUnstructured(value V, opts *[]store.Option) (*uns
 	return obj, nil
 }
 
+// getClient returns the appropriate dynamic client for the given key, based on the store configuration.
+// If the store is configured with a fixed namespace, it always returns that namespace.
+// If the key contains a namespace (namespace/name), it returns the corresponding namespaced client.
+// Otherwise, it returns the cluster-scoped client.
+func (c *DynamicResource[V]) getClient(key string) (dynamic.ResourceInterface, string, error) {
+	ns, name := KeyNamespaceNameFunc(key)
+	if c.cfg.Namespace != "" {
+		if ns != "" {
+			return nil, "", fmt.Errorf("%w: key %q cannot specify a namespace when the store is configured with a fixed namespace %q", errors.ErrBadRequest, key, c.cfg.Namespace)
+		}
+		return c.client.Namespace(c.cfg.Namespace), key, nil
+	}
+
+	if ns != "" {
+		return c.client.Namespace(ns), name, nil
+	}
+	return c.client, name, nil
+}
+
+// getClientFromObj returns the appropriate dynamic client for the given unstructured object, based on its
+// namespace and name. Ignores errors because the object should already have passed validation via enricher
+func (c *DynamicResource[V]) getClientFromObj(obj *unstructured.Unstructured) (client dynamic.ResourceInterface) {
+	if c.cfg.Namespace == "" {
+		client, _, _ = c.getClient(NamespaceKeyFunc(obj.GetNamespace(), obj.GetName()))
+	} else {
+		client, _, _ = c.getClient(obj.GetName())
+	}
+	return client
+}
+
+// prepareObj ensures that the given unstructured object has the correct name and namespace based on the provided key
+// and the store configuration. It sets the name and namespace if they are missing, and validates that they match the
+// key. Returns an error if there is a mismatch.
+func (c *DynamicResource[V]) prepareObj(key string, obj *unstructured.Unstructured) error {
+	ns, name := KeyNamespaceNameFunc(key)
+	if obj.GetName() == "" {
+		obj.SetName(name)
+	}
+	if obj.GetName() != name {
+		return fmt.Errorf("%w: key name %q does not match metadata.name %q", errors.ErrBadRequest, name, obj.GetName())
+	}
+	if ns != "" && c.cfg.Namespace != "" {
+		return fmt.Errorf("%w: key %q cannot specify a namespace when the store is configured with a fixed namespace %q", errors.ErrBadRequest, key, c.cfg.Namespace)
+	}
+	if ns == "" {
+		ns = c.cfg.Namespace
+	}
+	if obj.GetNamespace() == "" && c.cfg.Namespace != "" {
+		obj.SetNamespace(c.cfg.Namespace)
+	}
+	if obj.GetNamespace() != ns {
+		return fmt.Errorf("%w: key namespace %q does not match metadata.namespace %q", errors.ErrBadRequest, ns, obj.GetNamespace())
+	}
+
+	return nil
+}
+
+func (c *DynamicResource[V]) keyFromObj(obj *unstructured.Unstructured) string {
+	if c.cfg.Namespace != "" && obj.GetNamespace() == c.cfg.Namespace {
+		return obj.GetName()
+	}
+	return NamespaceKeyFunc(obj.GetNamespace(), obj.GetName())
+}
+
 // Create creates a new Kubernetes resource.
 func (c *DynamicResource[V]) Create(ctx context.Context, key string, value V, opts ...store.Option) error {
 	obj, err := c.toUnstructured(value, &opts)
 	if err != nil {
 		return err
 	}
-	if err := validateKeyMatchesName(key, obj); err != nil {
+	if err := c.prepareObj(key, obj); err != nil {
 		return err
 	}
+
 	opt, err := buildCreateOptions(opts)
 	if err != nil {
 		return err
@@ -184,7 +254,7 @@ func (c *DynamicResource[V]) Create(ctx context.Context, key string, value V, op
 }
 
 func (c *DynamicResource[V]) create(ctx context.Context, obj *unstructured.Unstructured, opt CreateOption) error {
-	_, err := c.client.Create(ctx, obj, metav1.CreateOptions{
+	_, err := c.getClientFromObj(obj).Create(ctx, obj, metav1.CreateOptions{
 		DryRun: kubemock.DryRunOption(opt.DryRun),
 	})
 	if err != nil {
@@ -202,7 +272,11 @@ func (c *DynamicResource[V]) Read(ctx context.Context, key string, opts ...store
 		return obj, store.ErrUnsupportedOption
 	}
 
-	ul, err := c.client.Get(ctx, key, metav1.GetOptions{})
+	client, name, err := c.getClient(key)
+	if err != nil {
+		return obj, err
+	}
+	ul, err := client.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return obj, fmt.Errorf("%w: %w", err, errors.ErrNotFound)
@@ -229,30 +303,31 @@ func (c *DynamicResource[V]) Update(ctx context.Context, key string, value V, op
 	if err != nil {
 		return err
 	}
-	if err := validateKeyMatchesName(key, obj); err != nil {
+	if err := c.prepareObj(key, obj); err != nil {
 		return err
 	}
+
 	opt, err := buildUpdateOptions(opts)
 	if err != nil {
 		return err
 	}
-	return c.update(ctx, key, obj, UpdateOption{
+	return c.update(ctx, obj, UpdateOption{
 		DryRun:          opt.DryRun,
 		SubResourceOnly: opt.SubResourceOnly,
 	})
 }
 
-func (c *DynamicResource[V]) update(ctx context.Context, key string, obj *unstructured.Unstructured, opt UpdateOption) error {
+func (c *DynamicResource[V]) update(ctx context.Context, obj *unstructured.Unstructured, opt UpdateOption) error {
 	// If SubResourceOnly is set, only update the status subresource.
 	// This is required for CRDs with status subresource enabled.
 	if opt.SubResourceOnly {
-		_, err := c.client.UpdateStatus(ctx, obj, metav1.UpdateOptions{
+		_, err := c.getClientFromObj(obj).UpdateStatus(ctx, obj, metav1.UpdateOptions{
 			DryRun: kubemock.DryRunOption(opt.DryRun),
 		})
 		return err
 	}
 
-	_, err := c.client.Update(ctx, obj, metav1.UpdateOptions{
+	_, err := c.getClientFromObj(obj).Update(ctx, obj, metav1.UpdateOptions{
 		DryRun: kubemock.DryRunOption(opt.DryRun),
 	})
 	return err
@@ -265,20 +340,22 @@ func (c *DynamicResource[V]) Apply(ctx context.Context, key string, value V, opt
 	if err != nil {
 		return err
 	}
-	if err := validateKeyMatchesName(key, obj); err != nil {
+	if err := c.prepareObj(key, obj); err != nil {
 		return err
 	}
+
 	opt, err := buildApplyOptions(opts)
 	if err != nil {
 		return err
 	}
+
 	if opt.SubResourceOnly {
-		_, err = c.client.ApplyStatus(ctx, key, obj, metav1.ApplyOptions{
+		_, err = c.getClientFromObj(obj).ApplyStatus(ctx, obj.GetName(), obj, metav1.ApplyOptions{
 			DryRun: kubemock.DryRunOption(opt.DryRun),
 		})
 		return err
 	}
-	return c.apply(ctx, key, obj, ApplyOption{
+	return c.apply(ctx, obj, ApplyOption{
 		DryRun:          opt.DryRun,
 		ResolveConflict: opt.ResolveConflict,
 		SubResourceOnly: opt.SubResourceOnly,
@@ -286,9 +363,10 @@ func (c *DynamicResource[V]) Apply(ctx context.Context, key string, value V, opt
 }
 
 // apply is the internal implementation for applying a Kubernetes resource with server-side apply.
-func (c *DynamicResource[V]) apply(ctx context.Context, key string, obj *unstructured.Unstructured, opt ApplyOption) error {
+func (c *DynamicResource[V]) apply(ctx context.Context, obj *unstructured.Unstructured, opt ApplyOption) error {
+	client := c.getClientFromObj(obj)
 	// try to get the existing resource
-	existing, err := c.client.Get(ctx, key, metav1.GetOptions{})
+	existing, err := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// resource doesn't exist, create it
@@ -303,7 +381,7 @@ func (c *DynamicResource[V]) apply(ctx context.Context, key string, obj *unstruc
 	if opt.ResolveConflict {
 		obj.SetResourceVersion(existing.GetResourceVersion())
 	}
-	return c.update(ctx, key, obj, UpdateOption{
+	return c.update(ctx, obj, UpdateOption{
 		DryRun:          opt.DryRun,
 		SubResourceOnly: opt.SubResourceOnly,
 	})
@@ -315,7 +393,11 @@ func (c *DynamicResource[V]) Delete(ctx context.Context, key string, opts ...sto
 	if err != nil {
 		return err
 	}
-	return c.client.Delete(ctx, key, metav1.DeleteOptions{
+	client, name, err := c.getClient(key)
+	if err != nil {
+		return err
+	}
+	return client.Delete(ctx, name, metav1.DeleteOptions{
 		DryRun: kubemock.DryRunOption(opt.DryRun),
 	})
 }
@@ -329,7 +411,7 @@ func (c *DynamicResource[V]) List(ctx context.Context, opts ...store.Option) (st
 		return nil, err
 	}
 
-	ul, err := c.client.List(ctx, metav1.ListOptions{
+	ul, err := c.client.Namespace(opt.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: opt.LabelSelector,
 	})
 	if err != nil {
@@ -355,25 +437,13 @@ func (c *DynamicResource[V]) List(ctx context.Context, opts ...store.Option) (st
 			}
 		}
 
+		key := NamespaceKeyFunc(item.GetNamespace(), item.GetName())
+		key = strings.TrimPrefix(key, c.cfg.Namespace+"/")
 		items = append(items, store.ListItem[string, V]{
-			Key:   item.GetName(),
+			Key:   key,
 			Value: value,
 		})
 	}
 
 	return items, nil
-}
-
-func validateKeyMatchesName(key string, obj *unstructured.Unstructured) error {
-	if key == "" || obj == nil {
-		return nil
-	}
-	if obj.GetName() == "" {
-		obj.SetName(key)
-		return nil
-	}
-	if key != obj.GetName() {
-		return fmt.Errorf("key %q does not match metadata.name %q", key, obj.GetName())
-	}
-	return nil
 }
