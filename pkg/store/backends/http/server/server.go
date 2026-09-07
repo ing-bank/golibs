@@ -13,32 +13,46 @@
 package server
 
 import (
+	"encoding/base64"
 	goerrors "errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/errors"
-	"github.com/ing-bank/golibs/pkg/opt"
 	"github.com/ing-bank/golibs/pkg/store"
 	httpstore "github.com/ing-bank/golibs/pkg/store/backends/http"
 	"github.com/ing-bank/golibs/pkg/store/backends/labels"
 )
 
 type Config struct {
-	OptionParser       store.OptionsParser `json:"-"`
-	PluralResourceName string              `json:"pluralResourceName"` // E.g. Namespaces
-	ResourceVersion    string              `json:"resourceVersion"`    // E.g. v1
+	OptionParser       store.OptionsParser          `json:"-"`
+	KeyDeserializer    func(string) (string, error) `json:"-"`                  // E.g. url.PathUnescape for key names
+	PluralResourceName string                       `json:"pluralResourceName"` // E.g. Namespaces
+	ResourceVersion    string                       `json:"resourceVersion"`    // E.g. v1
 
 	// UseLabels sets the ResourceVersion and PluralResourceName as labels in the store backend.
 	// The backend MUST support labels, otherwise setting this option will cause errors.
 	UseLabels bool `json:"useLabels"`
 }
 
+func KeyDeserializerBase64(key string) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(key)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64 key: %w", err)
+	}
+	return string(raw), nil
+}
+
 func (c *Config) ApplyDefaults() {
 	if c.OptionParser == nil {
 		c.OptionParser = store.UnserializeOptions
+	}
+	if c.KeyDeserializer == nil {
+		c.KeyDeserializer = url.PathUnescape
 	}
 }
 
@@ -46,6 +60,9 @@ func (c *Config) Validate() error {
 	c.ApplyDefaults()
 	if c.OptionParser == nil {
 		return fmt.Errorf("option parser is required")
+	}
+	if c.KeyDeserializer == nil {
+		return fmt.Errorf("key deserializer is required")
 	}
 	if c.UseLabels && (c.ResourceVersion == "" || c.PluralResourceName == "") {
 		return fmt.Errorf("resource version and plural resource name is required when using labels")
@@ -61,15 +78,15 @@ type Server[V httpstore.ValidatableNameable] struct {
 }
 
 // New creates a new Server with default options parser
-func New[V httpstore.ValidatableNameable](s store.Store[string, V], optCfg ...*Config) (*Server[V], error) {
-	cfg := opt.Opt(&Config{}, optCfg)
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+func New[V httpstore.ValidatableNameable](s store.Store[string, V]) (*Server[V], error) {
+	return NewForConfig(s, Config{})
+}
+
+func NewForConfig[V httpstore.ValidatableNameable](s store.Store[string, V], cfg Config) (*Server[V], error) {
+	if err := config.Configure(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to configure server: %w", err)
 	}
-	return &Server[V]{
-		store: s,
-		cfg:   cfg,
-	}, nil
+	return &Server[V]{store: s, cfg: &cfg}, nil
 }
 
 // Register registers all HTTP handlers on the given Gin router group.
@@ -173,7 +190,11 @@ func (p Server[V]) read(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	name := c.Param("name")
+	name, err := p.cfg.KeyDeserializer(c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	val, err := p.store.Read(c.Request.Context(), name, opts...)
 	if err != nil {
 		if goerrors.Is(err, errors.ErrNotFound) {
@@ -200,7 +221,11 @@ func (p Server[V]) update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	}
 
-	name := c.Param("name")
+	name, err := p.cfg.KeyDeserializer(c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	var body V
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -233,7 +258,11 @@ func (p Server[V]) delete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	name := c.Param("name")
+	name, err := p.cfg.KeyDeserializer(c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	err = p.store.Delete(c.Request.Context(), name, opts...)
 	if err != nil {
 		if goerrors.Is(err, errors.ErrNotFound) {
@@ -288,7 +317,11 @@ func (p Server[V]) apply(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	}
 
-	name := c.Param("name")
+	name, err := p.cfg.KeyDeserializer(c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	var body V
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

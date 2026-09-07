@@ -2,11 +2,13 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 
+	"github.com/ing-bank/golibs/pkg/config"
 	httputil "github.com/ing-bank/golibs/pkg/http"
-	"github.com/ing-bank/golibs/pkg/opt"
 	"github.com/ing-bank/golibs/pkg/store"
 	httpstore "github.com/ing-bank/golibs/pkg/store/backends/http"
 )
@@ -20,16 +22,51 @@ type Client[V httpstore.ValidatableNameable] struct {
 
 type Config struct {
 	OptionSerializer func(opts []store.Option) (store.SerializedOptions, error)
+	KeySerializer    func(key string) string
 }
 
-// New creates a new HTTP store client for the given base URL and custom http client.
-func New[V httpstore.ValidatableNameable](baseURL string, httpClient *httputil.Client, optCfg ...Config) *Client[V] {
-	cfg := opt.Opt(Config{OptionSerializer: store.SerializeOptions}, optCfg)
+func KeySerializerBase64(key string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(key))
+}
+
+func (c *Config) ApplyDefaults() {
+	if c.OptionSerializer == nil {
+		c.OptionSerializer = store.SerializeOptions
+	}
+	if c.KeySerializer == nil {
+		c.KeySerializer = neturl.PathEscape
+	}
+}
+
+func (c *Config) Validate() error {
+	if c.OptionSerializer == nil {
+		return fmt.Errorf("OptionSerializer is required")
+	}
+	if c.KeySerializer == nil {
+		return fmt.Errorf("KeySerializer is required")
+	}
+	return nil
+}
+
+func NewForConfig[V httpstore.ValidatableNameable](baseURL string, httpClient *httputil.Client, cfg Config) (*Client[V], error) {
+	if err := config.Configure(&cfg); err != nil {
+		return nil, err
+	}
 	return &Client[V]{
 		url:  baseURL,
 		http: httpClient,
 		cfg:  cfg,
-	}
+	}, nil
+}
+
+// New creates a new HTTP store client for the given base URL and custom http client.
+func New[V httpstore.ValidatableNameable](baseURL string, httpClient *httputil.Client) *Client[V] {
+	cfg := Config{OptionSerializer: store.SerializeOptions, KeySerializer: neturl.PathEscape}
+	return &Client[V]{
+		url:  baseURL,
+		http: httpClient,
+		cfg:  cfg,
+	} // TODO: UseNewForConfig
 }
 
 func NewBackend[V httpstore.ValidatableNameable](baseURL string, httpClient *httputil.Client) store.Backend[string, V] {
@@ -63,7 +100,7 @@ func (c *Client[V]) Read(ctx context.Context, key string, opts ...store.Option) 
 		return out, err
 	}
 
-	url := fmt.Sprintf("%s/%v", c.url, key)
+	url := fmt.Sprintf("%s/%v", c.url, c.cfg.KeySerializer(key))
 	resp := c.http.Get(ctx, url, httputil.WithRawQuery(serializedOptions.AsQuery())).Parse(&out)
 	return out, resp.Error()
 }
@@ -76,7 +113,7 @@ func (c *Client[V]) Update(ctx context.Context, key string, value V, opts ...sto
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("%s/%v", c.url, key)
+	url := fmt.Sprintf("%s/%v", c.url, c.cfg.KeySerializer(key))
 	resp := c.http.Put(ctx, url, value,
 		httputil.WithRawQuery(serializedOptions.AsQuery()),
 	)
@@ -94,7 +131,7 @@ func (c *Client[V]) Apply(ctx context.Context, key string, value V, opts ...stor
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("%s/%v", c.url, key)
+	url := fmt.Sprintf("%s/%v", c.url, c.cfg.KeySerializer(key))
 	resp := c.http.Post(ctx, url, value,
 		httputil.WithRawQuery(serializedOptions.AsQuery()),
 	)
@@ -109,7 +146,7 @@ func (c *Client[V]) Delete(ctx context.Context, key string, opts ...store.Option
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("%s/%v", c.url, key)
+	url := fmt.Sprintf("%s/%v", c.url, c.cfg.KeySerializer(key))
 	resp := c.http.Delete(ctx, url, nil,
 		httputil.WithRawQuery(serializedOptions.AsQuery()),
 	)

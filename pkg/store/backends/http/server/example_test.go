@@ -34,7 +34,7 @@ func (e ExampleType) Validate() error {
 func Example() {
 	gin.SetMode(gin.TestMode)
 	memStore, _ := store.New[string, ExampleType](memory.New)
-	srv, _ := New[ExampleType](memStore, &Config{ResourceVersion: "v1", PluralResourceName: "examples"})
+	srv, _ := NewForConfig[ExampleType](memStore, Config{ResourceVersion: "v1", PluralResourceName: "examples"})
 	r := gin.New()
 	srv.Register(r)
 
@@ -72,7 +72,7 @@ func Example_http() { // Example with Labels
 	gin.SetMode(gin.TestMode)
 	db := memory.NewOrDie[string, *labelstore.LabeledData[string, ExampleType]]()
 	memStore, _ := store.New[string, ExampleType](labelstore.NewBackend[string, ExampleType](db, labelstore.Config[ExampleType]{}))
-	srv, _ := New[ExampleType](memStore, &Config{ResourceVersion: "v1", PluralResourceName: "examples", UseLabels: true})
+	srv, _ := NewForConfig[ExampleType](memStore, Config{ResourceVersion: "v1", PluralResourceName: "examples", UseLabels: true})
 	r := gin.New()
 	srv.Register(r)
 
