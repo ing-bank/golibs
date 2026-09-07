@@ -301,7 +301,7 @@ func TestNormalizeURLFor(t *testing.T) {
 		},
 		{
 			name:    "invalid URL",
-			args:    args{cfg: Config{Host: "http://[::1]:namedport"}},
+			args:    args{cfg: Config{Host: "https://[::1]:namedport"}},
 			want:    "",
 			wantErr: true,
 		},
