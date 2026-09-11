@@ -155,6 +155,7 @@ func (p Server[V]) create(c *gin.Context) {
 
 	if err := p.SetLabelsIfNeeded(&opts); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Parse body
@@ -178,6 +179,7 @@ func (p Server[V]) create(c *gin.Context) {
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
+		return
 	}
 	c.Status(http.StatusCreated)
 }
@@ -219,6 +221,7 @@ func (p Server[V]) update(c *gin.Context) {
 	}
 	if err := p.SetLabelsIfNeeded(&opts); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	name, err := p.cfg.KeyDeserializer(c.Param("name"))
@@ -315,6 +318,7 @@ func (p Server[V]) apply(c *gin.Context) {
 	}
 	if err := p.SetLabelsIfNeeded(&opts); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	name, err := p.cfg.KeyDeserializer(c.Param("name"))

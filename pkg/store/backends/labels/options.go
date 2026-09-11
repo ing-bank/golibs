@@ -11,15 +11,17 @@ import (
 var SupportedOptions = []store.Option{
 	WithLabelSelector,
 	WithLabels,
+	WithLabel,
+	WithMapLabelSelector,
+	WithSingleLabelSelector,
 }
 
-type LabelSelector string
-
-func (l LabelSelector) Serialize() (string, string) {
-	return "labelSelector", string(l)
-}
-
-var WithLabelSelector, MatchLabelSelector = store.SerializableStringOptionBuilder("labelSelector")
+var (
+	WithLabelSelector, MatchLabelSelector = store.SerializableStringOptionBuilder("labelSelector")
+	// LabelSelector is a legacy alias for WithLabelSelector
+	// Deprecated: use WithLabelSelector instead
+	LabelSelector = WithLabelSelector
+)
 
 type Labels map[string]string // labels.Set is type map[string]string
 
@@ -40,7 +42,7 @@ func WithLabel(key, value string) store.Option {
 var WithMapLabelSelector = func(match map[string]string) store.Option {
 	raw := metav1.LabelSelector{MatchLabels: match}
 	sel, _ := metav1.LabelSelectorAsSelector(&raw)
-	return LabelSelector(sel.String())
+	return WithLabelSelector(sel.String())
 }
 
 var WithSingleLabelSelector = func(key, value string) store.Option {
