@@ -1,23 +1,28 @@
 module github.com/ing-bank/golibs
 
-go 1.26.1
+go 1.27.1
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.4
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.12
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.2
 	github.com/confluentinc/confluent-kafka-go/v2 v2.13.3
+	github.com/gin-contrib/pprof v1.5.4
+	github.com/gin-contrib/timeout v1.2.1
 	github.com/gin-gonic/gin v1.12.0
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0
+	github.com/openshift/oauth-proxy v1.1.2-0.20251020194713-39f8426add0e
+	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/xid v1.6.0
 	github.com/sirupsen/logrus v1.9.4
-	github.com/spf13/cobra v1.10.2 // indirect
+	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
+	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.69.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0
 	go.opentelemetry.io/otel v1.44.0
+	go.opentelemetry.io/otel/exporters/jaeger v1.17.0
 	go.opentelemetry.io/otel/sdk v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0
 	golang.org/x/sync v0.20.0
@@ -26,17 +31,6 @@ require (
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2
 	k8s.io/client-go v0.36.2
-)
-
-require (
-	github.com/gin-contrib/pprof v1.5.4
-	github.com/gin-contrib/timeout v1.2.1
-	github.com/openshift/oauth-proxy v1.1.2-0.20251020194713-39f8426add0e
-	github.com/pkg/errors v0.9.1
-	github.com/sony/gobreaker v1.0.0
-	github.com/uptrace/opentelemetry-go-extra/otellogrus v0.3.2
-	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.69.0
-	go.opentelemetry.io/otel/exporters/jaeger v1.17.0
 	sigs.k8s.io/controller-runtime v0.24.1
 )
 
@@ -97,6 +91,7 @@ require (
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/cel-go v0.27.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
@@ -124,10 +119,10 @@ require (
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.1 // indirect
+	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/testcontainers/testcontainers-go v0.41.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
-	github.com/uptrace/opentelemetry-go-extra/otelutil v0.3.2 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.etcd.io/etcd/api/v3 v3.6.9 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.6.9 // indirect
@@ -137,7 +132,6 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.42.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.42.0 // indirect
-	go.opentelemetry.io/otel/log v0.6.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect

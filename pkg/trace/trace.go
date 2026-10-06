@@ -74,7 +74,6 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/uptrace/opentelemetry-go-extra/otellogrus"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/jaeger"
@@ -141,13 +140,13 @@ func NewForConfig(cfg *Config) (*Provider, error) {
 	otel.SetTracerProvider(tp)
 	registered = true
 
-	log.AddHook(otellogrus.NewHook(otellogrus.WithLevels(
+	log.AddHook(NewLogrusHook(
 		log.PanicLevel,
 		log.FatalLevel,
 		log.ErrorLevel,
 		log.WarnLevel,
 		log.InfoLevel,
-	)))
+	))
 
 	return &Provider{provider: tp, skipPaths: cfg.SkipPaths, serviceName: cfg.ServiceName}, nil
 }
