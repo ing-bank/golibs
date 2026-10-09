@@ -16,15 +16,17 @@ func TestMiddleware(t *testing.T) {
 	tests := []struct {
 		name string
 		// Given
-		user   string
-		scopes []basic.Scope
+		user       string
+		scopes     []basic.Scope
+		hasContext bool
 
 		// Want
 		expectedScopes []basic.Scope
+		expectedUser   string
 		empty          bool
 	}{
 		{
-			name: "Legitimate user with scopes",
+			name: "Legitimate user with scopes from header",
 			user: "foo",
 			scopes: []basic.Scope{
 				{
@@ -54,6 +56,7 @@ func TestMiddleware(t *testing.T) {
 					Roles:        []string{"user"},
 				},
 			},
+			expectedUser: "foo",
 		},
 		{
 			name:   "User without username header",
@@ -61,7 +64,7 @@ func TestMiddleware(t *testing.T) {
 			empty:  true,
 		},
 		{
-			name: "User with single scope",
+			name: "User with single scope from header",
 			user: "foo",
 			scopes: []basic.Scope{
 				{
@@ -79,13 +82,36 @@ func TestMiddleware(t *testing.T) {
 					Roles:        []string{"admin"},
 				},
 			},
+			expectedUser: "foo",
+		},
+		{
+			name:       "User from context takes precedence over header",
+			user:       "header-user",
+			hasContext: true,
+			scopes: []basic.Scope{
+				{
+					Actions:      []string{scope.Wildcard},
+					Environments: []string{"prod"},
+					Teams:        []string{"team-context"},
+					Roles:        []string{"admin"},
+				},
+			},
+			expectedScopes: []basic.Scope{
+				{
+					Actions:      []string{scope.Wildcard},
+					Environments: []string{"prod"},
+					Teams:        []string{"team-context"},
+					Roles:        []string{"admin"},
+				},
+			},
+			expectedUser: "context-user",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Register a dynamic scope parser for this test
 			err := dynamic.RegisterScopeType[basic.Scope]("test-user",
-				dynamic.WithUserHeaderParser(func(_ *gin.Context) []basic.Scope {
+				dynamic.WithUserHeaderParser(func(_ *gin.Context, _ string) []basic.Scope {
 					return tt.scopes
 				}),
 			)
@@ -103,6 +129,22 @@ func TestMiddleware(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			req, _ := http.NewRequestWithContext(t.Context(), "GET", "", nil)
+
+			// Set up context if needed (simulating auth middleware setting trust)
+			if tt.hasContext {
+				scopes := make([]scope.Scope, len(tt.scopes))
+				for i, s := range tt.scopes {
+					scopes[i] = s
+				}
+				contextAccount := &access.Account{
+					Trust:  access.TrustUser,
+					Name:   "context-user",
+					Scopes: scopes,
+				}
+				ctx, _ := access.SetTrust(req.Context(), contextAccount)
+				req = req.WithContext(ctx)
+			}
+
 			if tt.user != "" {
 				req.Header.Set("User", tt.user)
 			}
@@ -116,6 +158,9 @@ func TestMiddleware(t *testing.T) {
 					t.Fatalf("expected no trust scopes but got %v", trust.Scopes)
 				}
 			} else {
+				if trust.Name != tt.expectedUser {
+					t.Errorf("trust.Name = %q, want %q", trust.Name, tt.expectedUser)
+				}
 				if len(trust.Scopes) != len(tt.expectedScopes) {
 					t.Fatalf("trust.Scopes len = %d, expected %d", len(trust.Scopes), len(tt.expectedScopes))
 				}

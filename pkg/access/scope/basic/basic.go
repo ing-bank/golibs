@@ -32,7 +32,7 @@ func (p *Parser) ParseNpaScope(message json.RawMessage) (scope.Scope, error) {
 	return scope.FromJSON[Scope](message)
 }
 
-func (p *Parser) ParseUserHeader(c *gin.Context) []scope.Scope {
+func (p *Parser) ParseUserHeader(c *gin.Context, _ string) []scope.Scope {
 	teamsRaw := c.GetHeader(p.cfg.TeamNameHeader)
 	if teamsRaw == "" {
 		return nil

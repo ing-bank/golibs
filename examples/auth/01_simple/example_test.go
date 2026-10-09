@@ -37,7 +37,7 @@ func (a *App) Register(rg gin.IRouter) {
 // CustomUserScopeParser implements user.ScopeParser for basic.Scope
 type CustomUserScopeParser struct{}
 
-func (p *CustomUserScopeParser) ParseUserHeader(c *gin.Context) []scope.Scope {
+func (p *CustomUserScopeParser) ParseUserHeader(c *gin.Context, _ string) []scope.Scope {
 	// Extract team from header (comma-separated values)
 	teamHeader := c.GetHeader("team")
 	teams := []string{"team1"} // Default team

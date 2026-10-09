@@ -10,7 +10,7 @@ import (
 
 //func Ex() {
 //	err := RegisterScopeType[basic.Scope]("basic",
-//		// WithUserHeaderParser(func(c *gin.Context) ([]basic.Scope, error) { ... }),
+//		// WithUserHeaderParser(func(c *gin.Context) []basic.Scope { ... }),
 //		// ...
 //	)
 //}
@@ -26,7 +26,7 @@ func RegisterScopeType[T scope.Scope](name string, option ...config.Option[*Anon
 
 type AnonScopeParser[T scope.Scope] struct {
 	name             string
-	parseUserHeaders func(c *gin.Context) []T
+	parseUserHeaders func(c *gin.Context, header string) []T
 }
 
 func (a AnonScopeParser[T]) GetName() string {
@@ -41,16 +41,16 @@ func (a AnonScopeParser[T]) ParseCertificateScope(in json.RawMessage) (scope.Sco
 	return scope.FromJSON[T](in)
 }
 
-func WithUserHeaderParser[T scope.Scope](headerParser func(c *gin.Context) []T) config.Option[*AnonScopeParser[T]] {
+func WithUserHeaderParser[T scope.Scope](headerParser func(c *gin.Context, header string) []T) config.Option[*AnonScopeParser[T]] {
 	return func(f *AnonScopeParser[T]) error {
 		f.parseUserHeaders = headerParser
 		return nil
 	}
 }
 
-func (a AnonScopeParser[T]) ParseUserHeader(c *gin.Context) []scope.Scope {
+func (a AnonScopeParser[T]) ParseUserHeader(c *gin.Context, header string) []scope.Scope {
 	if a.parseUserHeaders != nil {
-		return scope.AsScopeSlice(a.parseUserHeaders(c))
+		return scope.AsScopeSlice(a.parseUserHeaders(c, header))
 	}
 	return nil
 }

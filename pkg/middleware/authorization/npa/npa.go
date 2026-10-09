@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ing-bank/golibs/pkg/access"
+	"github.com/ing-bank/golibs/pkg/middleware/authentication/tokenauth"
 	"github.com/ing-bank/golibs/pkg/slices"
 	"github.com/ing-bank/golibs/pkg/trace"
 	log "github.com/sirupsen/logrus"
@@ -30,7 +31,14 @@ func Middleware(cfg Config) gin.HandlerFunc {
 		ctx, span := trace.NewSpanWithContext(c.Request.Context())
 		defer span.End()
 
-		name := c.GetHeader(cfg.Header)
+		// Try to get authenticated user from context first (set by authentication middleware)
+		name := tokenauth.GetAuthenticatedUser(c)
+
+		// Fall back to reading from configured header (for direct NPA identification)
+		if name == "" {
+			name = c.GetHeader(cfg.Header)
+		}
+
 		auth, ok := lookup[strings.ToLower(name)]
 
 		if ok {
@@ -45,7 +53,7 @@ func Middleware(cfg Config) gin.HandlerFunc {
 			var err error
 			ctx, err = access.SetTrust(ctx, account)
 			if err != nil {
-				log.WithContext(ctx).WithError(err).Errorf("[mTLS] Error setting trust")
+				log.WithContext(ctx).WithError(err).Errorf("[auth][npa] Error setting trust")
 				_ = c.AbortWithError(http.StatusUnauthorized, err)
 				return
 			}

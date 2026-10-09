@@ -12,12 +12,13 @@ type Config struct {
 	Enabled        bool   `json:"enabled"`        // Should be used by the caller, not used here
 	UsernameHeader string `json:"usernameHeader"` // Header to identify username
 
+
 	ScopeType   string      `json:"scopeType"`
 	ScopeParser ScopeParser `json:"-"`
 }
 
 type ScopeParser interface {
-	ParseUserHeader(c *gin.Context) []scope.Scope
+	ParseUserHeader(c *gin.Context, header string) []scope.Scope
 }
 
 func (c *Config) ApplyDefaults() {
