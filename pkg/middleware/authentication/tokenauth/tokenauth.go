@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ing-bank/golibs/pkg/access"
 	"github.com/ing-bank/golibs/pkg/trace"
 	log "github.com/sirupsen/logrus"
 )
@@ -54,26 +55,32 @@ func Middleware(cfg *Config) gin.HandlerFunc {
 			return
 		}
 
-		// Parse token to get username
-		username, err := cfg.TokenParser.ParseToken(c, token)
+		// Parse token to get account
+		account, err := cfg.TokenParser.ParseToken(c, token)
 		if err != nil {
 			log.WithContext(ctx).WithError(err).Warnf("[auth][token] Token parsing failed")
 			_ = c.AbortWithError(http.StatusUnauthorized, err)
 			return
 		}
 
-		if username == "" {
-			log.WithContext(ctx).Warnf("[auth][token] Token parser returned empty username")
+		if account == nil || account.Name == "" {
+			log.WithContext(ctx).Warnf("[auth][token] Token parser returned empty account")
 			c.Request = c.Request.WithContext(ctx)
 			c.Next()
 			return
 		}
 
-		// Store authenticated username and token in context
-		ctx = context.WithValue(ctx, CtxAuthenticatedUser, username)
+		// Store authenticated user and token in context
+		ctx = context.WithValue(ctx, CtxAuthenticatedUser, account.Name)
 		ctx = context.WithValue(ctx, CtxAuthenticatedToken, token)
+		ctx, err = access.SetTrust(ctx, account)
+		if err != nil {
+			log.WithContext(ctx).WithError(err).Errorf("[authz][user] Error setting trust")
+			_ = c.AbortWithError(http.StatusUnauthorized, err)
+			return
+		}
 
-		log.WithContext(ctx).WithField("user", username).Infof("[auth][token] Authenticated user")
+		log.WithContext(ctx).WithField("user", account.Name).Infof("[auth][token] Authenticated user")
 
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
@@ -107,4 +114,3 @@ func GetAuthenticatedToken(c *gin.Context) string {
 	}
 	return token
 }
-

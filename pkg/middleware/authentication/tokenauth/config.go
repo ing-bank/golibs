@@ -3,13 +3,13 @@
 // This middleware validates tokens from HTTP headers and extracts authenticated user identities.
 // It supports any token scheme (Bearer, Basic, custom) through configurable scheme validation
 // and customizable token parsing via the TokenParser interface.
-//
 package tokenauth
 
 import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ing-bank/golibs/pkg/access"
 	"github.com/ing-bank/golibs/pkg/access/scope"
 )
 
@@ -22,14 +22,13 @@ type Config struct {
 	TokenParser TokenParser `json:"-"`
 }
 
-// TokenParser extracts username and additional metadata from a token.
+// TokenParser extracts and validates a token, returning the authenticated account.
 type TokenParser interface {
-	// ParseToken extracts the authenticated username from the token.
-	// It validates the token and returns the username.
-	// If an error is returned, the authentication fails and the request is rejected.
-	// If an empty string is returned with nil error, the middleware passes the request through
+	// ParseToken validates the token and returns the authenticated account.
+	// If an error is returned, the authentication fails and the request is rejected with 401.
+	// If an empty account is returned with nil error, the middleware passes the request through
 	// without setting authentication context (allowing other auth methods to handle it).
-	ParseToken(c *gin.Context, token string) (username string, err error)
+	ParseToken(c *gin.Context, token string) (*access.Account, error)
 }
 
 // JWTParser additionally transforms JWT claims to scopes.
@@ -67,4 +66,3 @@ func (c *Config) Validate() error {
 
 	return nil
 }
-

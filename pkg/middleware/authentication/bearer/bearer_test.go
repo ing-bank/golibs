@@ -1,30 +1,32 @@
 package bearer
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ing-bank/golibs/pkg/access"
 )
 
 // MockTokenParser for testing
 type mockTokenParser struct {
-	parseFunc func(c *gin.Context, token string) (string, error)
+	parseFunc func(c *gin.Context, token string) (*access.Account, error)
 }
 
-func (m *mockTokenParser) ParseToken(c *gin.Context, token string) (string, error) {
+func (m *mockTokenParser) ParseToken(c *gin.Context, token string) (*access.Account, error) {
 	if m.parseFunc != nil {
 		return m.parseFunc(c, token)
 	}
-	return "test-user", nil
+	return &access.Account{Name: "test-user"}, nil
 }
 
 func TestMiddleware(t *testing.T) {
 	tests := []struct {
 		name              string
-		mockParser        func(c *gin.Context, token string) (string, error)
+		mockParser        func(c *gin.Context, token string) (*access.Account, error)
 		headerValue       string
 		expectedUser      string
 		expectedToken     string
@@ -32,33 +34,39 @@ func TestMiddleware(t *testing.T) {
 		shouldAbort       bool
 	}{
 		{
-			name:              "Valid Bearer token",
-			headerValue:       "Bearer test-token-123",
-			mockParser:        func(c *gin.Context, token string) (string, error) { return "user1", nil },
+			name:        "Valid Bearer token",
+			headerValue: "Bearer test-token-123",
+			mockParser: func(c *gin.Context, token string) (*access.Account, error) {
+				return &access.Account{Name: "user1"}, nil
+			},
 			expectedUser:      "user1",
 			expectedToken:     "test-token-123",
 			shouldHaveContext: true,
 		},
 		{
-			name:              "No Authorization header",
-			headerValue:       "",
-			mockParser:        func(c *gin.Context, token string) (string, error) { return "user1", nil },
+			name:        "No Authorization header",
+			headerValue: "",
+			mockParser: func(c *gin.Context, token string) (*access.Account, error) {
+				return &access.Account{Name: "user1"}, nil
+			},
 			expectedUser:      "",
 			expectedToken:     "",
 			shouldHaveContext: false,
 		},
 		{
-			name:              "Empty token",
-			headerValue:       "Bearer ",
-			mockParser:        func(c *gin.Context, token string) (string, error) { return "user1", nil },
+			name:        "Empty token",
+			headerValue: "Bearer ",
+			mockParser: func(c *gin.Context, token string) (*access.Account, error) {
+				return &access.Account{Name: "user1"}, nil
+			},
 			expectedUser:      "",
 			expectedToken:     "",
 			shouldHaveContext: false,
 		},
 		{
-			name:              "Parser returns empty username",
+			name:              "Parser returns nil account",
 			headerValue:       "Bearer test-token",
-			mockParser:        func(c *gin.Context, token string) (string, error) { return "", nil },
+			mockParser:        func(c *gin.Context, token string) (*access.Account, error) { return nil, nil },
 			expectedUser:      "",
 			expectedToken:     "",
 			shouldHaveContext: false,
@@ -66,7 +74,7 @@ func TestMiddleware(t *testing.T) {
 		{
 			name:              "Parser returns error - should abort",
 			headerValue:       "Bearer invalid-token",
-			mockParser:        func(c *gin.Context, token string) (string, error) { return "", errors.New("invalid token") },
+			mockParser:        func(c *gin.Context, token string) (*access.Account, error) { return nil, errors.New("invalid token") },
 			expectedUser:      "",
 			expectedToken:     "",
 			shouldHaveContext: false,
@@ -83,7 +91,7 @@ func TestMiddleware(t *testing.T) {
 
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
-			req, _ := http.NewRequestWithContext(t.Context(), "GET", "", nil)
+			req, _ := http.NewRequestWithContext(context.Background(), "GET", "", nil)
 
 			if tt.headerValue != "" {
 				req.Header.Set("Authorization", tt.headerValue)
@@ -138,4 +146,3 @@ func TestMiddlewareDisabled(t *testing.T) {
 		t.Error("Disabled middleware should not set context")
 	}
 }
-

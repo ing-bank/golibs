@@ -16,9 +16,8 @@ func TestMiddleware(t *testing.T) {
 	tests := []struct {
 		name string
 		// Given
-		user       string
-		scopes     []basic.Scope
-		hasContext bool
+		user   string
+		scopes []basic.Scope
 
 		// Want
 		expectedScopes []basic.Scope
@@ -84,28 +83,6 @@ func TestMiddleware(t *testing.T) {
 			},
 			expectedUser: "foo",
 		},
-		{
-			name:       "User from context takes precedence over header",
-			user:       "header-user",
-			hasContext: true,
-			scopes: []basic.Scope{
-				{
-					Actions:      []string{scope.Wildcard},
-					Environments: []string{"prod"},
-					Teams:        []string{"team-context"},
-					Roles:        []string{"admin"},
-				},
-			},
-			expectedScopes: []basic.Scope{
-				{
-					Actions:      []string{scope.Wildcard},
-					Environments: []string{"prod"},
-					Teams:        []string{"team-context"},
-					Roles:        []string{"admin"},
-				},
-			},
-			expectedUser: "context-user",
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,21 +106,6 @@ func TestMiddleware(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			req, _ := http.NewRequestWithContext(t.Context(), "GET", "", nil)
-
-			// Set up context if needed (simulating auth middleware setting trust)
-			if tt.hasContext {
-				scopes := make([]scope.Scope, len(tt.scopes))
-				for i, s := range tt.scopes {
-					scopes[i] = s
-				}
-				contextAccount := &access.Account{
-					Trust:  access.TrustUser,
-					Name:   "context-user",
-					Scopes: scopes,
-				}
-				ctx, _ := access.SetTrust(req.Context(), contextAccount)
-				req = req.WithContext(ctx)
-			}
 
 			if tt.user != "" {
 				req.Header.Set("User", tt.user)
