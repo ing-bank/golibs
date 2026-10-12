@@ -1,9 +1,11 @@
 package slices
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	goslices "slices"
+	"strconv"
 	"testing"
 )
 
@@ -1007,3 +1009,155 @@ func TestDifferenceCmpInt(t *testing.T) {
 		})
 	}
 }
+
+func TestTransformE(t *testing.T) {
+	t.Run("successful transformation of integers to strings", func(t *testing.T) {
+		in := []int{1, 2, 3, 4, 5}
+		want := []string{"1", "2", "3", "4", "5"}
+
+		got, err := TransformE(in, func(item int) (string, error) {
+			return fmt.Sprintf("%d", item), nil
+		})
+
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+	})
+
+	t.Run("transformation error returns nil result and error", func(t *testing.T) {
+		in := []int{1, 2, 3, 4, 5}
+		expectedErr := fmt.Errorf("transformation failed")
+
+		got, err := TransformE(in, func(item int) (string, error) {
+			if item == 3 {
+				return "", expectedErr
+			}
+			return fmt.Sprintf("%d", item), nil
+		})
+
+		if err == nil {
+			t.Errorf("expected error, got nil")
+		}
+		if !errors.Is(err, expectedErr) {
+			t.Errorf("expected error %v, got %v", expectedErr, err)
+		}
+		if got != nil {
+			t.Errorf("expected nil result on error, got %v", got)
+		}
+	})
+
+	t.Run("empty slice returns empty result", func(t *testing.T) {
+		in := []int{}
+		want := []string{}
+
+		got, err := TransformE(in, func(item int) (string, error) {
+			return fmt.Sprintf("%d", item), nil
+		})
+
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+	})
+
+	t.Run("single element slice", func(t *testing.T) {
+		in := []int{42}
+		want := []string{"42"}
+
+		got, err := TransformE(in, func(item int) (string, error) {
+			return fmt.Sprintf("%d", item), nil
+		})
+
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+	})
+
+	t.Run("transform strings to integers", func(t *testing.T) {
+		in := []string{"1", "2", "3", "4", "5"}
+		want := []int{1, 2, 3, 4, 5}
+
+		got, err := TransformE(in, func(item string) (int, error) {
+			return strconv.Atoi(item)
+		})
+
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+	})
+
+	t.Run("error on first element", func(t *testing.T) {
+		in := []int{1, 2, 3}
+		expectedErr := fmt.Errorf("first element error")
+
+		got, err := TransformE(in, func(item int) (string, error) {
+			if item == 1 {
+				return "", expectedErr
+			}
+			return fmt.Sprintf("%d", item), nil
+		})
+
+		if err == nil {
+			t.Errorf("expected error, got nil")
+		}
+		if !errors.Is(err, expectedErr) {
+			t.Errorf("expected error %v, got %v", expectedErr, err)
+		}
+		if got != nil {
+			t.Errorf("expected nil result on error, got %v", got)
+		}
+	})
+
+	t.Run("transform with struct type", func(t *testing.T) {
+		type Person struct {
+			Name string
+			Age  int
+		}
+
+		in := []Person{
+			{Name: "Alice", Age: 30},
+			{Name: "Bob", Age: 25},
+			{Name: "Charlie", Age: 35},
+		}
+		want := []string{"Alice", "Bob", "Charlie"}
+
+		got, err := TransformE(in, func(p Person) (string, error) {
+			return p.Name, nil
+		})
+
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+	})
+
+	t.Run("transformation returning empty strings", func(t *testing.T) {
+		in := []int{1, 2, 3}
+		want := []string{"", "", ""}
+
+		got, err := TransformE(in, func(item int) (string, error) {
+			return "", nil
+		})
+
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if !reflect.DeepEqual(want, got) {
+			t.Errorf("want %v, got %v", want, got)
+		}
+	})
+}
+

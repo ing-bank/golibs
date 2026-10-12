@@ -47,6 +47,19 @@ func Transform[S ~[]E, E any, B any](s S, trans func(item E) B) []B {
 	return transformations
 }
 
+// TransformE takes a slice and converts each item to a different data type
+func TransformE[S ~[]E, E any, B any](s S, trans func(item E) (B, error)) ([]B, error) {
+	transformations := make([]B, len(s))
+	for i, item := range s {
+		result, err := trans(item)
+		if err != nil {
+			return nil, err
+		}
+		transformations[i] = result
+	}
+	return transformations, nil
+}
+
 // MatchAny returns the first matching entry from 'subset' that exists in 'collection', or false if no match was found.
 func MatchAny[S ~[]E, E comparable](collection, subset S) (E, bool) {
 	for _, v := range subset {
@@ -105,7 +118,7 @@ func MapItems[S ~map[K]V, K cmp.Ordered, V any](s S) ([]K, []V) {
 
 	// Sort map keys
 	i := 0
-	for key, _ := range s {
+	for key := range s {
 		keys[i] = key
 		i += 1
 	}
@@ -194,7 +207,7 @@ func Difference[S ~[]E, E comparable](a S, b S) S {
 // DifferenceCmp returns the difference of two slices. A \ B or A - B.
 // It returns a new slice containing elements that are in 'A' but not in 'B'.
 func DifferenceCmp[S ~[]T, T any, E comparable](a S, b S, comp func(T) E) S {
-	var lookup = make(map[E]struct{}, len(a))
+	lookup := make(map[E]struct{}, len(a))
 	result := make(S, 0, len(a))
 
 	for _, v := range b {
