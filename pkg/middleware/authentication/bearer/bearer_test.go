@@ -20,7 +20,7 @@ func (m *mockTokenParser) ParseToken(c *gin.Context, token string) (*access.Acco
 	if m.parseFunc != nil {
 		return m.parseFunc(c, token)
 	}
-	return &access.Account{Name: "test-user"}, nil
+	return &access.Account{Trust: access.TrustUser, Name: "test-user"}, nil
 }
 
 func TestMiddleware(t *testing.T) {
@@ -37,7 +37,7 @@ func TestMiddleware(t *testing.T) {
 			name:        "Valid Bearer token",
 			headerValue: "Bearer test-token-123",
 			mockParser: func(c *gin.Context, token string) (*access.Account, error) {
-				return &access.Account{Name: "user1"}, nil
+				return &access.Account{Trust: access.TrustUser, Name: "user1"}, nil
 			},
 			expectedUser:      "user1",
 			expectedToken:     "test-token-123",
@@ -47,7 +47,7 @@ func TestMiddleware(t *testing.T) {
 			name:        "No Authorization header",
 			headerValue: "",
 			mockParser: func(c *gin.Context, token string) (*access.Account, error) {
-				return &access.Account{Name: "user1"}, nil
+				return &access.Account{Trust: access.TrustUser, Name: "user1"}, nil
 			},
 			expectedUser:      "",
 			expectedToken:     "",
@@ -57,7 +57,7 @@ func TestMiddleware(t *testing.T) {
 			name:        "Empty token",
 			headerValue: "Bearer ",
 			mockParser: func(c *gin.Context, token string) (*access.Account, error) {
-				return &access.Account{Name: "user1"}, nil
+				return &access.Account{Trust: access.TrustUser, Name: "user1"}, nil
 			},
 			expectedUser:      "",
 			expectedToken:     "",
