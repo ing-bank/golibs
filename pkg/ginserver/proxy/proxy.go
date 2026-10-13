@@ -32,6 +32,15 @@ var DefaultMethods = []string{
 // ReverseProxyConfig holds configuration specific to reverseProxy mode
 type ReverseProxyConfig struct {
 	TLS tlsclient.Config `json:"tls" yaml:"tls"`
+
+	// Timeouts for the underlying HTTP transport (in seconds)
+	// These control connection lifecycle and are important for streaming/watch operations
+	DialTimeout           *int `json:"dialTimeout" yaml:"dialTimeout"`           // Connection establishment timeout (default: 30s)
+	TLSHandshakeTimeout   *int `json:"tlsHandshakeTimeout" yaml:"tlsHandshakeTimeout"`   // TLS handshake timeout (default: 10s)
+	IdleConnTimeout       *int `json:"idleConnTimeout" yaml:"idleConnTimeout"`     // Maximum time to keep idle connections (default: 90s)
+	KeepAliveInterval     *int `json:"keepAliveInterval" yaml:"keepAliveInterval"`   // Keep-alive probe interval (default: 30s)
+	ResponseHeaderTimeout *int `json:"responseHeaderTimeout" yaml:"responseHeaderTimeout"` // Timeout for receiving response headers (default: 0 = disabled, important for streaming)
+	MaxIdleConns          *int `json:"maxIdleConns" yaml:"maxIdleConns"`         // Maximum idle connections (default: 100)
 }
 
 // Config defines proxy configuration with mode selection

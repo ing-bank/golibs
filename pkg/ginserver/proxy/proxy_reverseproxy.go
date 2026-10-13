@@ -3,15 +3,52 @@ package proxy
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	gohttp "net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ing-bank/golibs/pkg/http"
 	"github.com/ing-bank/golibs/pkg/tlsclient"
 )
+
+// defaultDialTimeout is the default timeout for establishing a connection
+const defaultDialTimeout = 30 * time.Second
+
+// defaultTLSHandshakeTimeout is the default timeout for TLS handshake
+const defaultTLSHandshakeTimeout = 10 * time.Second
+
+// defaultKeepAliveInterval is the default interval for TCP keep-alive probes
+const defaultKeepAliveInterval = 30 * time.Second
+
+// defaultIdleConnTimeout is the default maximum time to keep idle connections
+const defaultIdleConnTimeout = 90 * time.Second
+
+// defaultMaxIdleConns is the default maximum number of idle connections
+const defaultMaxIdleConns = 100
+
+// defaultResponseHeaderTimeout is the default timeout for receiving response headers
+// Set to 0 (disabled) for streaming operations like Kubernetes watches
+const defaultResponseHeaderTimeout = time.Duration(0)
+
+// getDurationOrDefault returns the value from the pointer, or the default if nil
+func getDurationOrDefault(value *int, defaultDuration time.Duration) time.Duration {
+	if value == nil {
+		return defaultDuration
+	}
+	return time.Duration(*value) * time.Second
+}
+
+// getIntOrDefault returns the value from the pointer, or the default if nil
+func getIntOrDefault(value *int, defaultInt int) int {
+	if value == nil {
+		return defaultInt
+	}
+	return *value
+}
 
 // newReverseProxy creates a Proxy using the net/http/httputil.ReverseProxy mode
 func newReverseProxy(cfg Config) (*Proxy, error) {
@@ -26,9 +63,25 @@ func newReverseProxy(cfg Config) (*Proxy, error) {
 		}
 	}
 
-	// Create custom transport with TLS config
+	// Extract timeout values with defaults
+	dialTimeout := getDurationOrDefault(cfg.ReverseProxyConfig.DialTimeout, defaultDialTimeout)
+	tlsHandshakeTimeout := getDurationOrDefault(cfg.ReverseProxyConfig.TLSHandshakeTimeout, defaultTLSHandshakeTimeout)
+	keepAliveInterval := getDurationOrDefault(cfg.ReverseProxyConfig.KeepAliveInterval, defaultKeepAliveInterval)
+	idleConnTimeout := getDurationOrDefault(cfg.ReverseProxyConfig.IdleConnTimeout, defaultIdleConnTimeout)
+	responseHeaderTimeout := getDurationOrDefault(cfg.ReverseProxyConfig.ResponseHeaderTimeout, defaultResponseHeaderTimeout)
+	maxIdleConns := getIntOrDefault(cfg.ReverseProxyConfig.MaxIdleConns, defaultMaxIdleConns)
+
+	// Create custom transport with TLS config and timeouts
 	transport := &gohttp.Transport{
 		TLSClientConfig: tlsConfig,
+		DialContext: (&net.Dialer{
+			Timeout:   dialTimeout,
+			KeepAlive: keepAliveInterval,
+		}).DialContext,
+		TLSHandshakeTimeout:   tlsHandshakeTimeout,
+		IdleConnTimeout:       idleConnTimeout,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		MaxIdleConns:          maxIdleConns,
 	}
 
 	reverseProxyRoutes := make([]routeProxy, 0, len(cfg.Routes))
