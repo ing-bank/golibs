@@ -56,12 +56,12 @@ func TestSharedFakeStoreTriggersManagerReconcile(t *testing.T) {
 	scheme.AddKnownTypeWithName(gv.WithKind("Cluster"), &sharedFakeCluster{})
 	scheme.AddKnownTypeWithName(gv.WithKind("ClusterList"), &sharedFakeClusterList{})
 
-	shared := kubemock.NewSharedFake(scheme)
-	mgr, err := kubemock.NewManagerWithSharedFake(nil, ctrl.Options{Scheme: scheme}, shared)
+	cluster := kubemock.NewFakeCluster(scheme)
+	mgr, err := kubemock.NewManagerForFakeCluster(nil, ctrl.Options{Scheme: scheme}, cluster)
 	require.NoError(t, err)
 
 	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "clusters"}
-	resource := shared.DynamicClient().Resource(gvr)
+	resource := cluster.DynamicClient().Resource(gvr)
 	store, err := kubernetes.New[*sharedFakeCluster](kubernetes.Config{
 		Namespace: "default",
 		Group:     "example.com",
@@ -151,12 +151,12 @@ func TestSharedFakeStoreStatusSubresourceTriggersManagerReconcile(t *testing.T) 
 	scheme.AddKnownTypeWithName(gv.WithKind("Cluster"), &sharedFakeCluster{})
 	scheme.AddKnownTypeWithName(gv.WithKind("ClusterList"), &sharedFakeClusterList{})
 
-	shared := kubemock.NewSharedFake(scheme)
-	mgr, err := kubemock.NewManagerWithSharedFake(nil, ctrl.Options{Scheme: scheme}, shared)
+	cluster := kubemock.NewFakeCluster(scheme)
+	mgr, err := kubemock.NewManagerForFakeCluster(nil, ctrl.Options{Scheme: scheme}, cluster)
 	require.NoError(t, err)
 
 	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "clusters"}
-	resource := shared.DynamicClient().Resource(gvr)
+	resource := cluster.DynamicClient().Resource(gvr)
 	store, err := kubernetes.New[*sharedFakeCluster](kubernetes.Config{
 		Namespace: "default",
 		Group:     "example.com",
@@ -219,11 +219,14 @@ func TestSharedFakeStoreStatusSubresourceTriggersManagerReconcile(t *testing.T) 
 		t.Fatal("timed out waiting for reconcile status update")
 	}
 
+	current, err := store.Read(ctx, "demo")
+	require.NoError(t, err)
 	err = store.Update(ctx, "demo", &sharedFakeCluster{
 		TypeMeta: metav1.TypeMeta{APIVersion: "example.com/v1", Kind: "Cluster"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "demo",
-			Namespace: "default",
+			Name:            "demo",
+			Namespace:       "default",
+			ResourceVersion: current.ResourceVersion,
 		},
 		Status: "status-subresource",
 	}, kubernetes.WithSubResourceOnly(true))

@@ -185,3 +185,69 @@ func TestNewFakeManager_IncrementsGenerationOnCreateAndApply(t *testing.T) {
 	require.NoError(t, mgr.GetClient().Get(ctx, client.ObjectKey{Namespace: "default", Name: "demo"}, &stored))
 	require.EqualValues(t, 3, stored.Generation)
 }
+
+func TestNewFakeManager_GenerationOnlyChangesWithDesiredState(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	mgr, err := NewManager(nil, ctrl.Options{Scheme: scheme})
+	require.NoError(t, err)
+	c := mgr.GetClient()
+	ctx := context.Background()
+
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"}}
+	require.NoError(t, c.Create(ctx, pod))
+	require.EqualValues(t, 1, pod.Generation)
+
+	tests := []struct {
+		name   string
+		mutate func() error
+		want   int64
+	}{
+		{"status update keeps generation", func() error {
+			pod.Status.Phase = corev1.PodRunning
+			return c.Status().Update(ctx, pod)
+		}, 1},
+		{"metadata update keeps generation", func() error {
+			pod.Finalizers = append(pod.Finalizers, "example/finalizer")
+			return c.Update(ctx, pod)
+		}, 1},
+		{"spec update bumps generation", func() error {
+			pod.Spec.ActiveDeadlineSeconds = new(int64(30))
+			return c.Update(ctx, pod)
+		}, 2},
+		{"deletion with finalizer bumps generation", func() error {
+			return c.Delete(ctx, pod)
+		}, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tt.mutate())
+			require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(pod), pod))
+			require.Equal(t, tt.want, pod.Generation)
+		})
+	}
+}
+
+func TestNewFakeManager_NoopUpdateKeepsResourceVersion(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	mgr, err := NewManager(nil, ctrl.Options{Scheme: scheme})
+	require.NoError(t, err)
+	c := mgr.GetClient()
+	ctx := context.Background()
+
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"}}
+	require.NoError(t, c.Create(ctx, pod))
+	pod.Status.Phase = corev1.PodRunning
+	require.NoError(t, c.Status().Update(ctx, pod))
+	rv := pod.ResourceVersion
+
+	require.NoError(t, c.Status().Update(ctx, pod))
+	require.Equal(t, rv, pod.ResourceVersion, "identical status update")
+	require.NoError(t, c.Update(ctx, pod))
+	require.Equal(t, rv, pod.ResourceVersion, "identical update")
+
+	pod.Status.Phase = corev1.PodSucceeded
+	require.NoError(t, c.Status().Update(ctx, pod))
+	require.NotEqual(t, rv, pod.ResourceVersion, "changed status update")
+}

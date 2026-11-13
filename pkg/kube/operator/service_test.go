@@ -176,8 +176,8 @@ func TestReconcilerReconcileUpdatesStatusAndAddsFinalizer(t *testing.T) {
 	defer cancel()
 
 	scheme := newTestScheme()
-	shared := kubemock.NewSharedFake(scheme)
-	client := shared.Client()
+	cluster := kubemock.NewFakeCluster(scheme)
+	client := cluster.Client()
 
 	obj := &testObj{
 		TypeMeta: metav1.TypeMeta{APIVersion: "test.example.com/v1", Kind: "Test"},
@@ -222,8 +222,8 @@ func TestReconcilerFailSetsReadyFalseAndRequeues(t *testing.T) {
 	defer cancel()
 
 	scheme := newTestScheme()
-	shared := kubemock.NewSharedFake(scheme)
-	client := shared.Client()
+	cluster := kubemock.NewFakeCluster(scheme)
+	client := cluster.Client()
 
 	obj := &testObj{
 		TypeMeta: metav1.TypeMeta{APIVersion: "test.example.com/v1", Kind: "Test"},
@@ -267,3 +267,12 @@ func TestReconcilerFailSetsReadyFalseAndRequeues(t *testing.T) {
 	}
 }
 
+func TestNewObjectReturnsNonNilPointer(t *testing.T) {
+	obj := NewObject[*testObj]()
+	if obj == nil {
+		t.Fatal("expected non-nil object")
+	}
+	if NewObject[*testObj]() == obj {
+		t.Fatal("expected a fresh instance per call")
+	}
+}

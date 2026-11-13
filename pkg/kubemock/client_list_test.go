@@ -91,12 +91,12 @@ func makeUnstructured(gv schema.GroupVersion, kind, name, namespace, spec string
 func TestSharedFakeDynamicClient_ListCustomCRDObjects(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
-	gv := schema.GroupVersion{Group: "ichp.ing.net", Version: "v1"}
+	gv := schema.GroupVersion{Group: "foo.ing.net", Version: "v1"}
 	scheme.AddKnownTypeWithName(gv.WithKind("ManagedCluster"), &testManagedCluster{})
 	scheme.AddKnownTypeWithName(gv.WithKind("ManagedClusterList"), &testManagedClusterList{})
 
-	shared := NewSharedFake(scheme)
-	resource := shared.ResourceClient(schema.GroupVersionResource{Group: gv.Group, Version: gv.Version, Resource: "managedclusters"}, "default")
+	cluster := NewFakeCluster(scheme)
+	resource := cluster.ResourceClient(schema.GroupVersionResource{Group: gv.Group, Version: gv.Version, Resource: "managedclusters"}, "default")
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -125,7 +125,7 @@ func TestSharedFakeDynamicClient_SupportsMultipleCRDsAndBuiltins(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	managedGV := schema.GroupVersion{Group: "ichp.ing.net", Version: "v1"}
+	managedGV := schema.GroupVersion{Group: "foo.ing.net", Version: "v1"}
 	scheme.AddKnownTypeWithName(managedGV.WithKind("ManagedCluster"), &testManagedCluster{})
 	scheme.AddKnownTypeWithName(managedGV.WithKind("ManagedClusterList"), &testManagedClusterList{})
 
@@ -133,20 +133,20 @@ func TestSharedFakeDynamicClient_SupportsMultipleCRDsAndBuiltins(t *testing.T) {
 	scheme.AddKnownTypeWithName(poolGV.WithKind("ClusterPool"), &testClusterPool{})
 	scheme.AddKnownTypeWithName(poolGV.WithKind("ClusterPoolList"), &testClusterPoolList{})
 
-	shared := NewSharedFake(scheme)
+	cluster := NewFakeCluster(scheme)
 	ctx := context.Background()
 
-	managed := shared.ResourceClient(schema.GroupVersionResource{Group: managedGV.Group, Version: managedGV.Version, Resource: "managedclusters"}, "default")
+	managed := cluster.ResourceClient(schema.GroupVersionResource{Group: managedGV.Group, Version: managedGV.Version, Resource: "managedclusters"}, "default")
 	for i := 0; i < 2; i++ {
 		_, err := managed.Create(ctx, makeUnstructured(managedGV, "ManagedCluster", "mc-"+string(rune('0'+i)), "default", "cluster-"+string(rune('0'+i))), metav1.CreateOptions{})
 		require.NoError(t, err)
 	}
 
-	pools := shared.ResourceClient(schema.GroupVersionResource{Group: poolGV.Group, Version: poolGV.Version, Resource: "clusterpools"}, "default")
+	pools := cluster.ResourceClient(schema.GroupVersionResource{Group: poolGV.Group, Version: poolGV.Version, Resource: "clusterpools"}, "default")
 	_, err := pools.Create(ctx, makeUnstructured(poolGV, "ClusterPool", "pool-a", "default", "ready"), metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	configmaps := shared.ResourceClient(schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}, "default")
+	configmaps := cluster.ResourceClient(schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}, "default")
 	_, err = configmaps.Create(ctx, &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "ConfigMap",

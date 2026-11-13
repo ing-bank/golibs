@@ -18,8 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/dynamic/fake"
-	"k8s.io/client-go/testing"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -75,30 +73,6 @@ func New[V GenericType](cfg Config, client dynamic.NamespaceableResourceInterfac
 	}
 
 	return dyn, nil
-}
-
-// NewFake creates a new DynamicResource with a fake Kubernetes client for testing.
-// The fake client simulates Kubernetes API behavior without requiring a real cluster.
-func NewFake[V GenericType](cfg Config, opts ...Option[V]) *DynamicResource[V] {
-	gvr := schema.GroupVersionResource{
-		Group:    cfg.Group,
-		Version:  cfg.Version,
-		Resource: cfg.Resource,
-	}
-
-	fakeClient := fake.NewSimpleDynamicClientWithCustomListKinds(
-		runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{gvr: cfg.Resource + "List"},
-	)
-
-	tracker, _ := fakeClient.Tracker().(testing.ObjectTracker)
-	fakeClient.Fake.PrependReactor("*", "*", kubemock.DryRunReactor(tracker))
-
-	dyn, err := New[V](cfg, fakeClient.Resource(gvr), opts...)
-	if err != nil {
-		panic(err)
-	}
-	return dyn
 }
 
 // NewForConfig creates a new DynamicResource using the default kubeconfig.

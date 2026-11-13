@@ -2,149 +2,118 @@ package kubemock
 
 import (
 	"context"
-	"fmt"
+	"sort"
 	"sync"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
-// NewManager returns a controller-runtime manager wired to the kubemock fake client.
+// NewManager returns a controller-runtime manager backed by a new FakeCluster
+// for opts.Scheme (client-go's scheme when nil) seeded with initObjs.
 //
-// It is intended for unit tests and local integration tests where you want to construct
-// a manager and pass mgr.GetClient() into reconcilers without a real cluster.
-//
-// The fake manager disables leader election and binds metrics/health endpoints to port 0,
-// and it installs a lightweight in-memory cache so the manager can register informers and
-// observe fake add/update/delete events without a real API server.
+// The manager disables leader election, binds metrics, health and pprof
+// endpoints to port 0, and uses an in-memory cache whose informers receive
+// add/update/delete events for writes made through mgr.GetClient().
 func NewManager(cfg *rest.Config, opts ctrl.Options, initObjs ...runtime.Object) (ctrl.Manager, error) {
-	if cfg == nil {
-		cfg = &rest.Config{Host: "https://fake.invalid"}
-	}
 	if opts.Scheme == nil {
 		opts.Scheme = clientgoscheme.Scheme
 	}
-	_ = corev1.AddToScheme(opts.Scheme)
-	fakeClient := NewControllerRuntimeClientFromFakeClient(NewFakeClient(), opts.Scheme, defaultRESTMapperForScheme(opts.Scheme), initObjs...)
-	return NewManagerWithClient(cfg, opts, fakeClient)
+	return NewManagerForFakeCluster(cfg, opts, NewFakeCluster(opts.Scheme, initObjs...))
 }
 
-// NewManagerWithClient builds a controller-runtime manager around an injected fake client.
+// NewManagerWithClient builds a fake manager around an existing fake client.
+// Writes through mgr.GetClient() emit informer events; writes made directly on
+// fakeClient do not.
 func NewManagerWithClient(cfg *rest.Config, opts ctrl.Options, fakeClient client.Client) (ctrl.Manager, error) {
-	if cfg == nil {
-		cfg = &rest.Config{Host: "https://fake.invalid"}
-	}
-	if opts.Scheme == nil {
-		opts.Scheme = clientgoscheme.Scheme
-	}
-	_ = corev1.AddToScheme(opts.Scheme)
 	if fakeClient == nil {
-		fakeClient = NewControllerRuntimeClientFromFakeClient(NewFakeClient(), opts.Scheme, defaultRESTMapperForScheme(opts.Scheme))
+		return NewManager(cfg, opts)
 	}
-
-	cacheClient := newFakeCache(fakeClient)
-	eventClient := &fakeEventingClient{Client: fakeClient, cache: cacheClient}
-
-	opts.NewClient = func(_ *rest.Config, _ client.Options) (client.Client, error) {
-		return eventClient, nil
+	if opts.Scheme == nil {
+		opts.Scheme = fakeClient.Scheme()
 	}
-	opts.NewCache = func(_ *rest.Config, _ ctrlcache.Options) (ctrlcache.Cache, error) {
-		return cacheClient, nil
-	}
-	opts.LeaderElection = false
-	opts.Metrics = metricsserver.Options{BindAddress: "0"}
-	opts.HealthProbeBindAddress = "0"
-	opts.PprofBindAddress = "0"
-
-	return ctrl.NewManager(cfg, opts)
+	cache := newFakeCache(fakeClient)
+	return newFakeManager(cfg, opts, &eventingClient{Client: fakeClient, cache: cache}, cache)
 }
 
-// NewManagerWithSharedFake builds a controller-runtime manager that reuses the same in-memory
-// object tracker and cache as a shared fake instance.
-func NewManagerWithSharedFake(cfg *rest.Config, opts ctrl.Options, shared *SharedFake) (ctrl.Manager, error) {
+// NewManagerForFakeCluster builds a fake manager on top of cluster, so writes
+// through cluster.Client(), cluster.DynamicClient() and mgr.GetClient() all
+// reach the manager's informers.
+func NewManagerForFakeCluster(cfg *rest.Config, opts ctrl.Options, cluster *FakeCluster) (ctrl.Manager, error) {
+	if cluster == nil {
+		cluster = NewFakeCluster(opts.Scheme)
+	}
+	if opts.Scheme == nil {
+		opts.Scheme = cluster.scheme
+	}
+	return newFakeManager(cfg, opts, cluster.client, cluster.cache)
+}
+
+func newFakeManager(cfg *rest.Config, opts ctrl.Options, c client.Client, cache ctrlcache.Cache) (ctrl.Manager, error) {
 	if cfg == nil {
 		cfg = &rest.Config{Host: "https://fake.invalid"}
 	}
-	if shared == nil {
-		shared = NewSharedFake(opts.Scheme)
-	}
-	if opts.Scheme == nil {
-		opts.Scheme = shared.scheme
-	}
-	_ = corev1.AddToScheme(opts.Scheme)
-	if shared.cache == nil {
-		shared.cache = newFakeCache(shared.client)
-	}
-	if shared.client == nil {
-		shared.client = NewControllerRuntimeClientFromFakeClient(NewFakeClient(), opts.Scheme, defaultRESTMapperForScheme(opts.Scheme))
-		shared.cache = newFakeCache(shared.client)
-	}
-
-	eventClient := &fakeEventingClient{Client: shared.client, cache: shared.cache}
-	opts.NewClient = func(_ *rest.Config, _ client.Options) (client.Client, error) {
-		return eventClient, nil
-	}
-	opts.NewCache = func(_ *rest.Config, _ ctrlcache.Options) (ctrlcache.Cache, error) {
-		return shared.cache, nil
-	}
+	opts.NewClient = func(*rest.Config, client.Options) (client.Client, error) { return c, nil }
+	opts.NewCache = func(*rest.Config, ctrlcache.Options) (ctrlcache.Cache, error) { return cache, nil }
 	opts.LeaderElection = false
 	opts.Metrics = metricsserver.Options{BindAddress: "0"}
 	opts.HealthProbeBindAddress = "0"
 	opts.PprofBindAddress = "0"
-
 	return ctrl.NewManager(cfg, opts)
 }
 
+// fakeCache serves reads straight from the client (always consistent, unlike
+// a real cache) and keeps one fakeInformer per kind.
+//
+// Events are derived from stored state rather than from the write call: after
+// every write the object is re-read and diffed against the informer's copy.
+// That makes finalizer deletes, DeleteAllOf, no-op writes and dynamic writes
+// produce the same events a real watch would, from a single code path.
 type fakeCache struct {
-	mu        sync.Mutex
 	client    client.Client
+	mu        sync.Mutex
 	informers map[schema.GroupVersionKind]*fakeInformer
 }
 
-func newFakeCache(client client.Client) *fakeCache {
-	return &fakeCache{
-		client:    client,
-		informers: map[schema.GroupVersionKind]*fakeInformer{},
-	}
+func newFakeCache(c client.Client) *fakeCache {
+	return &fakeCache{client: c, informers: map[schema.GroupVersionKind]*fakeInformer{}}
 }
 
 func (c *fakeCache) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	if c.client == nil {
-		return nil
-	}
 	return c.client.Get(ctx, key, obj, opts...)
 }
 
 func (c *fakeCache) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	if c.client == nil {
-		return nil
-	}
 	return c.client.List(ctx, list, opts...)
 }
 
-func (c *fakeCache) GetInformer(ctx context.Context, obj client.Object, opts ...ctrlcache.InformerGetOption) (ctrlcache.Informer, error) {
-	gvk, err := objectGVK(c.client, obj)
+func (c *fakeCache) GetInformer(ctx context.Context, obj client.Object, _ ...ctrlcache.InformerGetOption) (ctrlcache.Informer, error) {
+	gvk, err := apiutil.GVKForObject(obj, c.client.Scheme())
 	if err != nil {
 		return nil, err
 	}
-	return c.getInformer(gvk), nil
+	return c.informer(ctx, gvk), nil
 }
 
-func (c *fakeCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...ctrlcache.InformerGetOption) (ctrlcache.Informer, error) {
-	return c.getInformer(gvk), nil
+func (c *fakeCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, _ ...ctrlcache.InformerGetOption) (ctrlcache.Informer, error) {
+	return c.informer(ctx, gvk), nil
 }
 
-func (c *fakeCache) RemoveInformer(ctx context.Context, obj client.Object) error {
-	gvk, err := objectGVK(c.client, obj)
+func (c *fakeCache) RemoveInformer(_ context.Context, obj client.Object) error {
+	gvk, err := apiutil.GVKForObject(obj, c.client.Scheme())
 	if err != nil {
 		return err
 	}
@@ -154,355 +123,308 @@ func (c *fakeCache) RemoveInformer(ctx context.Context, obj client.Object) error
 	return nil
 }
 
-func (c *fakeCache) Start(ctx context.Context) error {
+// Start returns immediately: informers are fed synchronously by writes.
+func (c *fakeCache) Start(context.Context) error { return nil }
+
+// WaitForCacheSync is always true: reads go straight to the client.
+func (c *fakeCache) WaitForCacheSync(context.Context) bool { return true }
+
+// IndexField is a no-op; field selectors need indexes registered on the
+// underlying fake client builder.
+func (c *fakeCache) IndexField(context.Context, client.Object, string, client.IndexerFunc) error {
 	return nil
 }
 
-func (c *fakeCache) WaitForCacheSync(ctx context.Context) bool {
-	return true
-}
-
-func (c *fakeCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	return nil
-}
-
-func (c *fakeCache) getInformer(gvk schema.GroupVersionKind) *fakeInformer {
+// informer returns the informer for gvk, creating it with the currently
+// stored objects so new handlers see them, like an initial list.
+func (c *fakeCache) informer(ctx context.Context, gvk schema.GroupVersionKind) *fakeInformer {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if informer, ok := c.informers[gvk]; ok {
-		return informer
+	if inf, ok := c.informers[gvk]; ok {
+		return inf
 	}
-	informer := &fakeInformer{gvk: gvk, objects: map[string]interface{}{}}
-	c.informers[gvk] = informer
-	return informer
+	inf := &fakeInformer{objects: map[types.NamespacedName]client.Object{}}
+	for _, obj := range c.listStored(ctx, gvk) {
+		inf.objects[client.ObjectKeyFromObject(obj)] = obj
+	}
+	c.informers[gvk] = inf
+	return inf
 }
 
-func objectGVK(c client.Client, obj client.Object) (schema.GroupVersionKind, error) {
-	if obj == nil {
-		return schema.GroupVersionKind{}, fmt.Errorf("nil object")
+// listStored returns stored objects of gvk; kinds without a registered List
+// type yield nothing.
+func (c *fakeCache) listStored(ctx context.Context, gvk schema.GroupVersionKind) []client.Object {
+	listGVK := gvk.GroupVersion().WithKind(gvk.Kind + "List")
+	listObj, err := c.client.Scheme().New(listGVK)
+	if err != nil {
+		return nil
 	}
-	gvks, _, err := c.Scheme().ObjectKinds(obj)
-	if err != nil || len(gvks) == 0 {
-		if gvk := obj.GetObjectKind().GroupVersionKind(); !gvk.Empty() {
-			return gvk, nil
+	if u, ok := listObj.(*unstructured.UnstructuredList); ok {
+		u.SetGroupVersionKind(listGVK) // installed resources are unstructured and carry no kind
+	}
+	list, ok := listObj.(client.ObjectList)
+	if !ok || c.client.List(ctx, list) != nil {
+		return nil
+	}
+	items, err := meta.ExtractList(list)
+	if err != nil {
+		return nil
+	}
+	out := make([]client.Object, 0, len(items))
+	for _, item := range items {
+		if obj, ok := item.(client.Object); ok {
+			out = append(out, obj)
 		}
-		return schema.GroupVersionKind{}, fmt.Errorf("could not determine GVK for object %T: %w", obj, err)
 	}
-	return gvks[0], nil
+	return out
 }
 
+// sync re-reads key and emits the event that brings the gvk informer in line
+// with stored state.
+func (c *fakeCache) sync(ctx context.Context, gvk schema.GroupVersionKind, key types.NamespacedName) {
+	inf := c.informer(ctx, gvk)
+	current := c.newObject(gvk)
+	switch err := c.client.Get(ctx, key, current); {
+	case apierrors.IsNotFound(err):
+		inf.apply(key, nil)
+	case err == nil:
+		inf.apply(key, current)
+	}
+}
+
+// syncObject syncs the stored state of obj after a write.
+func (c *fakeCache) syncObject(ctx context.Context, obj runtime.Object) {
+	gvk, err := apiutil.GVKForObject(obj, c.client.Scheme())
+	if err != nil {
+		return
+	}
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return
+	}
+	c.sync(ctx, gvk, types.NamespacedName{Namespace: accessor.GetNamespace(), Name: accessor.GetName()})
+}
+
+// syncKnown re-syncs every object the gvk informer knows, catching deletes
+// from bulk operations.
+func (c *fakeCache) syncKnown(ctx context.Context, gvk schema.GroupVersionKind) {
+	for _, key := range c.informer(ctx, gvk).keys() {
+		c.sync(ctx, gvk, key)
+	}
+}
+
+// newObject returns an empty typed object for gvk, or unstructured if the
+// scheme does not know the kind or it was installed without a Go type. Typed
+// objects match what real informers deliver.
+func (c *fakeCache) newObject(gvk schema.GroupVersionKind) client.Object {
+	if obj, err := c.client.Scheme().New(gvk); err == nil {
+		if _, isUnstructured := obj.(*unstructured.Unstructured); !isUnstructured {
+			if typed, ok := obj.(client.Object); ok {
+				return typed
+			}
+		}
+	}
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(gvk)
+	return u
+}
+
+// fakeInformer holds the last known state per object and delivers events
+// synchronously to its handlers.
 type fakeInformer struct {
 	mu       sync.Mutex
-	gvk      schema.GroupVersionKind
-	objects  map[string]interface{}
-	handlers []toolscache.ResourceEventHandler
+	objects  map[types.NamespacedName]client.Object
+	handlers []*handlerRegistration
 }
 
-func (i *fakeInformer) AddEventHandler(handler toolscache.ResourceEventHandler) (toolscache.ResourceEventHandlerRegistration, error) {
-	return i.addHandler(handler)
+type handlerRegistration struct {
+	handler toolscache.ResourceEventHandler
 }
 
-func (i *fakeInformer) AddEventHandlerWithResyncPeriod(handler toolscache.ResourceEventHandler, resyncPeriod time.Duration) (toolscache.ResourceEventHandlerRegistration, error) {
-	return i.addHandler(handler)
-}
+func (r *handlerRegistration) HasSynced() bool                          { return true }
+func (r *handlerRegistration) HasSyncedChecker() toolscache.DoneChecker { return syncedChecker{} }
 
-func (i *fakeInformer) AddEventHandlerWithOptions(handler toolscache.ResourceEventHandler, options toolscache.HandlerOptions) (toolscache.ResourceEventHandlerRegistration, error) {
-	return i.addHandler(handler)
-}
+type syncedChecker struct{}
 
-func (i *fakeInformer) RemoveEventHandler(handle toolscache.ResourceEventHandlerRegistration) error {
-	return nil
-}
-
-func (i *fakeInformer) AddIndexers(indexers toolscache.Indexers) error {
-	return nil
-}
-
-func (i *fakeInformer) HasSynced() bool {
-	return true
-}
-
-func (i *fakeInformer) HasSyncedChecker() toolscache.DoneChecker {
-	return fakeDoneChecker{}
-}
-
-func (i *fakeInformer) IsStopped() bool {
-	return false
-}
-
-func (i *fakeInformer) addHandler(handler toolscache.ResourceEventHandler) (toolscache.ResourceEventHandlerRegistration, error) {
-	if handler == nil {
-		return nil, fmt.Errorf("nil event handler")
-	}
-	i.mu.Lock()
-	i.handlers = append(i.handlers, handler)
-	objects := make([]interface{}, 0, len(i.objects))
-	for _, obj := range i.objects {
-		objects = append(objects, obj)
-	}
-	i.mu.Unlock()
-	for _, obj := range objects {
-		handler.OnAdd(obj, false)
-	}
-	return &fakeResourceEventHandlerRegistration{informer: i, handler: handler}, nil
-}
-
-func (i *fakeInformer) emit(eventType string, obj interface{}, oldObj interface{}) {
-	i.mu.Lock()
-	handlers := append([]toolscache.ResourceEventHandler(nil), i.handlers...)
-	i.mu.Unlock()
-	for _, handler := range handlers {
-		switch eventType {
-		case "add":
-			handler.OnAdd(obj, false)
-		case "update":
-			handler.OnUpdate(oldObj, obj)
-		case "delete":
-			handler.OnDelete(obj)
-		}
-	}
-}
-
-func (i *fakeInformer) storeObject(obj interface{}) {
-	if obj == nil {
-		return
-	}
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	key, _ := toolscache.MetaNamespaceKeyFunc(obj)
-	if key == "" {
-		key = fmt.Sprintf("%T/%p", obj, obj)
-	}
-	i.objects[key] = obj
-}
-
-func (i *fakeInformer) deleteObject(obj interface{}) {
-	if obj == nil {
-		return
-	}
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	key, _ := toolscache.MetaNamespaceKeyFunc(obj)
-	if key == "" {
-		key = fmt.Sprintf("%T/%p", obj, obj)
-	}
-	delete(i.objects, key)
-}
-
-type fakeResourceEventHandlerRegistration struct {
-	informer *fakeInformer
-	handler  toolscache.ResourceEventHandler
-}
-
-func (f *fakeResourceEventHandlerRegistration) HasSynced() bool {
-	return true
-}
-
-func (f *fakeResourceEventHandlerRegistration) HasSyncedChecker() toolscache.DoneChecker {
-	return fakeDoneChecker{}
-}
-
-type fakeDoneChecker struct{}
-
-func (f fakeDoneChecker) Name() string { return "kubemock-fake-informer" }
-func (f fakeDoneChecker) Done() <-chan struct{} {
+func (syncedChecker) Name() string { return "kubemock-fake-informer" }
+func (syncedChecker) Done() <-chan struct{} {
 	ch := make(chan struct{})
 	close(ch)
 	return ch
 }
 
-type fakeEventingClient struct {
+func (i *fakeInformer) AddEventHandler(h toolscache.ResourceEventHandler) (toolscache.ResourceEventHandlerRegistration, error) {
+	return i.addHandler(h), nil
+}
+
+func (i *fakeInformer) AddEventHandlerWithResyncPeriod(h toolscache.ResourceEventHandler, _ time.Duration) (toolscache.ResourceEventHandlerRegistration, error) {
+	return i.addHandler(h), nil
+}
+
+func (i *fakeInformer) AddEventHandlerWithOptions(h toolscache.ResourceEventHandler, _ toolscache.HandlerOptions) (toolscache.ResourceEventHandlerRegistration, error) {
+	return i.addHandler(h), nil
+}
+
+func (i *fakeInformer) RemoveEventHandler(handle toolscache.ResourceEventHandlerRegistration) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	for idx, reg := range i.handlers {
+		if reg == handle {
+			i.handlers = append(i.handlers[:idx], i.handlers[idx+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
+func (i *fakeInformer) AddIndexers(toolscache.Indexers) error    { return nil }
+func (i *fakeInformer) HasSynced() bool                          { return true }
+func (i *fakeInformer) HasSyncedChecker() toolscache.DoneChecker { return syncedChecker{} }
+func (i *fakeInformer) IsStopped() bool                          { return false }
+
+// addHandler registers h and replays known objects as adds, sorted for
+// deterministic tests.
+func (i *fakeInformer) addHandler(h toolscache.ResourceEventHandler) *handlerRegistration {
+	reg := &handlerRegistration{handler: h}
+	i.mu.Lock()
+	i.handlers = append(i.handlers, reg)
+	keys := i.sortedKeysLocked()
+	existing := make([]client.Object, 0, len(keys))
+	for _, key := range keys {
+		existing = append(existing, i.objects[key])
+	}
+	i.mu.Unlock()
+	for _, obj := range existing {
+		h.OnAdd(obj, true)
+	}
+	return reg
+}
+
+func (i *fakeInformer) keys() []types.NamespacedName {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.sortedKeysLocked()
+}
+
+func (i *fakeInformer) sortedKeysLocked() []types.NamespacedName {
+	keys := make([]types.NamespacedName, 0, len(i.objects))
+	for key := range i.objects {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(a, b int) bool { return keys[a].String() < keys[b].String() })
+	return keys
+}
+
+// apply records current (nil when deleted) for key and emits the matching
+// event. An unchanged resourceVersion means nothing was persisted: no event.
+// Handlers run outside the lock so they may write back to the client.
+func (i *fakeInformer) apply(key types.NamespacedName, current client.Object) {
+	i.mu.Lock()
+	old, known := i.objects[key]
+	var notify func(toolscache.ResourceEventHandler)
+	switch {
+	case current == nil && known:
+		delete(i.objects, key)
+		notify = func(h toolscache.ResourceEventHandler) { h.OnDelete(old) }
+	case current == nil:
+	case !known:
+		i.objects[key] = current
+		notify = func(h toolscache.ResourceEventHandler) { h.OnAdd(current, false) }
+	case old.GetResourceVersion() != current.GetResourceVersion():
+		i.objects[key] = current
+		notify = func(h toolscache.ResourceEventHandler) { h.OnUpdate(old, current) }
+	}
+	handlers := append([]*handlerRegistration(nil), i.handlers...)
+	i.mu.Unlock()
+	if notify == nil {
+		return
+	}
+	for _, reg := range handlers {
+		notify(reg.handler)
+	}
+}
+
+// eventingClient syncs the cache after each successful write so informers
+// observe it.
+type eventingClient struct {
 	client.Client
 	cache *fakeCache
 }
 
-func (c *fakeEventingClient) Status() client.SubResourceWriter {
-	if c == nil || c.Client == nil {
-		return nil
+func (c *eventingClient) synced(ctx context.Context, obj runtime.Object, err error) error {
+	if err == nil {
+		c.cache.syncObject(ctx, obj)
 	}
-	return &fakeSubResourceWriter{SubResourceWriter: c.Client.Status(), cache: c.cache}
+	return err
 }
 
-func (c *fakeEventingClient) SubResource(subResource string) client.SubResourceClient {
-	if c == nil || c.Client == nil {
-		return nil
-	}
-	return &fakeSubResourceClient{SubResourceClient: c.Client.SubResource(subResource), cache: c.cache}
+func (c *eventingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	return c.synced(ctx, obj, c.Client.Create(ctx, obj, opts...))
 }
 
-// fakeSubResourceWriter wraps status/subresource writes so informer caches observe
-// subresource updates as normal object updates.
-type fakeSubResourceWriter struct {
-	client.SubResourceWriter
-	cache *fakeCache
+func (c *eventingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	return c.synced(ctx, obj, c.Client.Update(ctx, obj, opts...))
 }
 
-func (w *fakeSubResourceWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-	if obj == nil {
-		return w.SubResourceWriter.Update(ctx, obj, opts...)
-	}
-	before := obj.DeepCopyObject()
-	if err := w.SubResourceWriter.Update(ctx, obj, opts...); err != nil {
+func (c *eventingClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	return c.synced(ctx, obj, c.Client.Patch(ctx, obj, patch, opts...))
+}
+
+func (c *eventingClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+	return c.syncedApply(ctx, obj, c.Client.Apply(ctx, obj, opts...))
+}
+
+func (c *eventingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	return c.synced(ctx, obj, c.Client.Delete(ctx, obj, opts...))
+}
+
+func (c *eventingClient) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
+	if err := c.Client.DeleteAllOf(ctx, obj, opts...); err != nil {
 		return err
 	}
-	if w != nil && w.cache != nil {
-		w.cache.notify("update", obj, before)
+	if gvk, err := apiutil.GVKForObject(obj, c.Scheme()); err == nil {
+		c.cache.syncKnown(ctx, gvk)
 	}
 	return nil
 }
 
-func (w *fakeSubResourceWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	if obj == nil {
-		return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
-	}
-	before := obj.DeepCopyObject()
-	if err := w.SubResourceWriter.Patch(ctx, obj, patch, opts...); err != nil {
+// syncedApply syncs the object named by an apply configuration.
+func (c *eventingClient) syncedApply(ctx context.Context, obj runtime.ApplyConfiguration, err error) error {
+	if err != nil {
 		return err
 	}
-	if w != nil && w.cache != nil {
-		w.cache.notify("update", obj, before)
+	if values, convErr := runtime.DefaultUnstructuredConverter.ToUnstructured(obj); convErr == nil {
+		c.cache.syncObject(ctx, &unstructured.Unstructured{Object: values})
 	}
 	return nil
 }
 
-func (w *fakeSubResourceWriter) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
-	if err := w.SubResourceWriter.Create(ctx, obj, subResource, opts...); err != nil {
-		return err
-	}
-	if w != nil && w.cache != nil && obj != nil {
-		w.cache.notify("update", obj, nil)
-	}
-	return nil
+func (c *eventingClient) Status() client.SubResourceWriter {
+	return c.SubResource("status")
 }
 
-func (w *fakeSubResourceWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
-	return w.SubResourceWriter.Apply(ctx, obj, opts...)
+func (c *eventingClient) SubResource(subResource string) client.SubResourceClient {
+	return &eventingSubResourceClient{SubResourceClient: c.Client.SubResource(subResource), parent: c}
 }
 
-// fakeSubResourceClient wraps named subresources (e.g. status) so they emit
-// update events to the in-memory informer cache.
-type fakeSubResourceClient struct {
+// eventingSubResourceClient syncs the parent object after subresource writes.
+type eventingSubResourceClient struct {
 	client.SubResourceClient
-	cache *fakeCache
+	parent *eventingClient
 }
 
-func (c *fakeSubResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-	if obj == nil {
-		return c.SubResourceClient.Update(ctx, obj, opts...)
-	}
-	before := obj.DeepCopyObject()
-	if err := c.SubResourceClient.Update(ctx, obj, opts...); err != nil {
-		return err
-	}
-	if c != nil && c.cache != nil {
-		c.cache.notify("update", obj, before)
-	}
-	return nil
+func (c *eventingSubResourceClient) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	return c.parent.synced(ctx, obj, c.SubResourceClient.Create(ctx, obj, subResource, opts...))
 }
 
-func (c *fakeSubResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	if obj == nil {
-		return c.SubResourceClient.Patch(ctx, obj, patch, opts...)
-	}
-	before := obj.DeepCopyObject()
-	if err := c.SubResourceClient.Patch(ctx, obj, patch, opts...); err != nil {
-		return err
-	}
-	if c != nil && c.cache != nil {
-		c.cache.notify("update", obj, before)
-	}
-	return nil
+func (c *eventingSubResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	return c.parent.synced(ctx, obj, c.SubResourceClient.Update(ctx, obj, opts...))
 }
 
-func (c *fakeSubResourceClient) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
-	if err := c.SubResourceClient.Create(ctx, obj, subResource, opts...); err != nil {
-		return err
-	}
-	if c != nil && c.cache != nil && obj != nil {
-		c.cache.notify("update", obj, nil)
-	}
-	return nil
+func (c *eventingSubResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	return c.parent.synced(ctx, obj, c.SubResourceClient.Patch(ctx, obj, patch, opts...))
 }
 
-func (c *fakeSubResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
-	return c.SubResourceClient.Apply(ctx, obj, opts...)
-}
-
-func (c *fakeEventingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	if err := c.Client.Create(ctx, obj, opts...); err != nil {
-		return err
-	}
-	c.notify("add", obj, nil)
-	return nil
-}
-
-func (c *fakeEventingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	before := obj.DeepCopyObject()
-	if err := c.Client.Update(ctx, obj, opts...); err != nil {
-		return err
-	}
-	c.notify("update", obj, before)
-	return nil
-}
-
-func (c *fakeEventingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	before := obj.DeepCopyObject()
-	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
-		return err
-	}
-	c.notify("delete", before, nil)
-	return nil
-}
-
-func (c *fakeEventingClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	before := obj.DeepCopyObject()
-	if err := c.Client.Patch(ctx, obj, patch, opts...); err != nil {
-		return err
-	}
-	c.notify("update", obj, before)
-	return nil
-}
-
-func (c *fakeEventingClient) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	return c.Client.DeleteAllOf(ctx, obj, opts...)
-}
-
-func (c *fakeCache) notify(eventType string, obj interface{}, oldObj interface{}) {
-	if c == nil || obj == nil {
-		return
-	}
-	var gvk schema.GroupVersionKind
-	if typed, ok := obj.(client.Object); ok {
-		var err error
-		gvk, err = objectGVK(c.client, typed)
-		if err != nil {
-			if runtimeObj, ok := obj.(runtime.Object); ok {
-				gvk = runtimeObj.GetObjectKind().GroupVersionKind()
-			}
-		}
-	} else if runtimeObj, ok := obj.(runtime.Object); ok {
-		gvk = runtimeObj.GetObjectKind().GroupVersionKind()
-	}
-	if gvk.Empty() {
-		return
-	}
-	informer := c.getInformer(gvk)
-	switch eventType {
-	case "add":
-		informer.storeObject(obj)
-		informer.emit("add", obj, nil)
-	case "update":
-		informer.storeObject(obj)
-		informer.emit("update", obj, oldObj)
-	case "delete":
-		informer.deleteObject(obj)
-		informer.emit("delete", obj, nil)
-	}
-}
-
-func (c *fakeEventingClient) notify(eventType string, obj interface{}, oldObj interface{}) {
-	if c == nil || c.cache == nil {
-		return
-	}
-	c.cache.notify(eventType, obj, oldObj)
+func (c *eventingSubResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return c.parent.syncedApply(ctx, obj, c.SubResourceClient.Apply(ctx, obj, opts...))
 }

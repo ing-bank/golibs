@@ -18,6 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Obj is the constraint for reconciled resources. T is the pointer type
+// (e.g. *MyCR); see NewObject and ADR-0004 for how fresh instances are created.
 type Obj interface {
 	client.Object
 	StatusConditions
@@ -45,6 +47,8 @@ func (c *Config) ApplyDefaults() {
 	}
 }
 
+// NewReconciler creates a Reconciler for resource type T that runs services in
+// order on apply and delete.
 func NewReconciler[T Obj](client client.Client, cfg Config, services ...Service[T]) *Reconciler[T] {
 	cfg.ApplyDefaults()
 	return &Reconciler[T]{
@@ -55,8 +59,9 @@ func NewReconciler[T Obj](client client.Client, cfg Config, services ...Service[
 	}
 }
 
+// Reconcile implements reconcile.Reconciler.
 func (r *Reconciler[T]) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	item := zeroValue[T]()
+	item := NewObject[T]()
 	if err := r.Client.Get(ctx, req.NamespacedName, item); err != nil {
 		return ctrl.Result{}, nil
 	}
@@ -96,6 +101,7 @@ func (r *Reconciler[T]) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	return ctrl.Result{}, r.Client.Status().Update(ctx, item)
 }
 
+// Fail records err in the Ready condition and requeues the item.
 func (r *Reconciler[T]) Fail(ctx context.Context, item T, err error) (ctrl.Result, error) {
 	log.NewLoggerFromContext(ctx).Errorf(err, "failed to reconcile")
 	r.SetReady(item, metav1.ConditionFalse, err.Error())
@@ -105,6 +111,7 @@ func (r *Reconciler[T]) Fail(ctx context.Context, item T, err error) (ctrl.Resul
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil // TODO: exponential backoff
 }
 
+// SetReady sets the Ready condition on item.
 func (r *Reconciler[T]) SetReady(item T, status metav1.ConditionStatus, optReason ...string) {
 	reason := opt.Opt("Ready", optReason)
 	meta.SetStatusCondition(item.GetConditions(), metav1.Condition{
@@ -133,7 +140,12 @@ func ToString[T Obj](item T) string {
 	return string(raw)
 }
 
-func zeroValue[T Obj]() T {
+// NewObject returns a freshly allocated, non-nil instance of T. T is a pointer
+// type (e.g. *MyCR) whose zero value is nil, so the pointed-to struct is
+// allocated via reflection. This keeps the API to a single type parameter
+// instead of the [T any, PT interface{ *T; Obj }] pattern; controller-runtime's
+// reconcile.AsReconciler makes the same choice. See ADR-0004.
+func NewObject[T Obj]() T {
 	var zero T
 	value := reflect.ValueOf(zero)
 	if !value.IsValid() || value.Kind() != reflect.Pointer || !value.IsNil() {
