@@ -1,3 +1,10 @@
+// Package log provides the section-prefixed logger used by the kube operator
+// packages and a logrus bridge for controller-runtime.
+//
+// Logger wraps controller-runtime's global logger (logf.Log). That logger
+// discards everything until ctrl.SetLogger is called; pkg/kube/runtime does
+// this for you, defaulting to NewLogrusLogger. When using pkg/kube/operator
+// without pkg/kube/runtime, call ctrl.SetLogger yourself. See ADR-0006.
 package log
 
 import (
@@ -53,7 +60,7 @@ func (l *Logger) Infof(format string, args ...any) {
 }
 
 func (l *Logger) Errorf(err error, format string, args ...any) {
-	l.Logger.Info("[ERROR] " + fmt.Sprintf("%s: %s", l.Format(format, args...), err.Error()))
+	l.Logger.Error(err, "[ERROR] "+l.Format(format, args...))
 }
 
 //func (l *LogWrapper) ErrorMsg(format string, args ...any) {
@@ -61,7 +68,7 @@ func (l *Logger) Errorf(err error, format string, args ...any) {
 //}
 
 func (l *Logger) Debugf(format string, args ...any) {
-	l.Logger.V(4).Info("[DEBUG] "+format, args...)
+	l.Logger.V(4).Info("[DEBUG] " + l.Format(format, args...))
 }
 
 func (l *Logger) WithSection(sections ...string) *Logger {

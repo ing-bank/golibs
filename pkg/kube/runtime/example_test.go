@@ -56,36 +56,32 @@ func (l *WidgetList) DeepCopyObject() kruntime.Object {
 
 var _ operator.Obj = (*Widget)(nil)
 
-// NewReadyService returns a dummy operator.Service that only marks a Widget
-// as ready. Real services would create or update dependent resources here.
-func NewReadyService() operator.Service[*Widget] {
-	svc, _ := operator.NewAnonService[*Widget]("ReadyService",
-		operator.WithApply(func(ctx context.Context, w *Widget) error {
-			meta.SetStatusCondition(w.GetConditions(), metav1.Condition{
-				Type:               "Ready",
-				Status:             metav1.ConditionTrue,
-				Reason:             "WidgetReady",
-				ObservedGeneration: w.GetGeneration(),
-			})
-			return nil
-		}),
+// NewProvisionService returns a dummy operator.Service. Real services would
+// create or update dependent resources in Apply and clean them up in Delete.
+// Services do not manage status: the reconciler records a condition per
+// service (named after the service) and sets "Ready" once all succeeded.
+func NewProvisionService() operator.Service[*Widget] {
+	svc, _ := operator.NewAnonService[*Widget]("Provisioned",
+		operator.WithApply(func(ctx context.Context, w *Widget) error { return nil }),
 		operator.WithDelete(func(ctx context.Context, w *Widget) error { return nil }),
 	)
 	return svc
 }
 
-func readyStatus(w *Widget) string {
-	if c := meta.FindStatusCondition(w.Conditions.Conditions, "Ready"); c != nil {
-		return string(c.Status)
+// conditions renders the Widget's status conditions as Type=Status pairs.
+func conditions(w *Widget) []string {
+	out := []string{}
+	for _, c := range w.Conditions.Conditions {
+		out = append(out, c.Type+"="+string(c.Status))
 	}
-	return "<unset>"
+	return out
 }
 
 func Example() {
 	runner, err := NewForConfig(Config[*Widget]{
 		UseFakeClient: true,
 		Schemes:       []AddToSchemeFunc{AddWidgetToScheme},
-		Services:      operator.Services[*Widget]{NewReadyService()},
+		Services:      operator.Services[*Widget]{NewProvisionService()},
 	})
 	if err != nil {
 		panic(err)
@@ -105,12 +101,12 @@ func Example() {
 		if err := c.Create(ctx, w); err != nil {
 			panic(err)
 		}
-		fmt.Println("created, ready:", readyStatus(w))
+		fmt.Println("created:", conditions(w))
 
 		key := client.ObjectKeyFromObject(w)
 		for ctx.Err() == nil {
-			if err := c.Get(ctx, key, w); err == nil && readyStatus(w) != "<unset>" {
-				fmt.Println("reconciled, ready:", readyStatus(w))
+			if err := c.Get(ctx, key, w); err == nil && meta.IsStatusConditionTrue(w.Conditions.Conditions, "Ready") {
+				fmt.Println("reconciled:", conditions(w))
 				return
 			}
 			time.Sleep(50 * time.Millisecond)
@@ -122,6 +118,6 @@ func Example() {
 	}
 
 	// Output:
-	// created, ready: <unset>
-	// reconciled, ready: True
+	// created: []
+	// reconciled: [Provisioned=True Ready=True]
 }

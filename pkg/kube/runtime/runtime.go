@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 
+	"github.com/go-logr/logr"
 	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/graceful"
+	kubelog "github.com/ing-bank/golibs/pkg/kube/log"
 	"github.com/ing-bank/golibs/pkg/kube/operator"
 	"github.com/ing-bank/golibs/pkg/kubemock"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,6 +27,14 @@ type Config[T operator.Obj] struct {
 	ControllerOpts           *ctrl.Options                                                    `json:"controllerOpts,omitempty"`
 	ControllerManagerBuilder func(mgr ctrl.Manager, reconciler *operator.Reconciler[T]) error `json:"-"`
 
+	// Logger is installed as controller-runtime's global logger by NewForConfig
+	// (via ctrl.SetLogger). It defaults to kubelog.NewLogrusLogger(nil) so
+	// controller, reconciler and workflow logs share the logrus standard
+	// logger. Pass your own logr.Logger (e.g. zap) to override. A zero value or
+	// logr.Discard() (both have a nil sink) selects the default; to silence
+	// logs pass a logrus logger whose output is io.Discard. See ADR-0006.
+	Logger logr.Logger `json:"-"`
+
 	Operator *operator.Config     `json:"operator,omitempty"`
 	Services operator.Services[T] `json:"services,omitempty"`
 }
@@ -41,6 +51,10 @@ func (c *Config[T]) ApplyDefaults() {
 
 	if c.ControllerOpts == nil {
 		c.ControllerOpts = &ctrl.Options{}
+	}
+
+	if c.Logger.GetSink() == nil {
+		c.Logger = kubelog.NewLogrusLogger(nil)
 	}
 
 	if c.ControllerManagerBuilder == nil {
@@ -76,11 +90,17 @@ type Runtime[T operator.Obj] struct {
 
 // NewForConfig builds a controller manager and registers a reconciler for T.
 // T is the resource pointer type, e.g. runtime.NewForConfig(runtime.Config[*MyCR]{...}).
+//
+// It also installs cfg.Logger as controller-runtime's process-wide logger.
+// Without this, controller-runtime discards all logs and prints a
+// "log.SetLogger(...) was never called" warning after 30 seconds.
 func NewForConfig[T operator.Obj](cfg Config[T]) (*Runtime[T], error) {
 	err := config.Configure(&cfg)
 	if err != nil {
 		return nil, err
 	}
+
+	ctrl.SetLogger(cfg.Logger)
 
 	// Populate schemes
 	for _, addToScheme := range cfg.Schemes {
