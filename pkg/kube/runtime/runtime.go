@@ -35,8 +35,8 @@ type Config[T operator.Obj] struct {
 	// logs pass a logrus logger whose output is io.Discard. See ADR-0006.
 	Logger logr.Logger `json:"-"`
 
-	Operator *operator.Config     `json:"operator,omitempty"`
-	Services operator.Services[T] `json:"services,omitempty"`
+	Operator *operator.Config[T]  `json:"operator,omitempty"`
+	Services operator.Services[T] `json:"services,omitempty"` // This is a duplicate of Operator.Services, but is more convenient to set in a Config literal.
 }
 
 // ApplyDefaults fills unset fields, including a ControllerManagerBuilder that
@@ -46,7 +46,7 @@ func (c *Config[T]) ApplyDefaults() {
 		c.Scheme = runtime.NewScheme()
 	}
 	if c.Operator == nil {
-		c.Operator = &operator.Config{}
+		c.Operator = &operator.Config[T]{}
 	}
 
 	if c.ControllerOpts == nil {
@@ -120,7 +120,9 @@ func NewForConfig[T operator.Obj](cfg Config[T]) (*Runtime[T], error) {
 		return nil, err
 	}
 
-	reconciler := operator.NewReconciler[T](mgr.GetClient(), *cfg.Operator, cfg.Services...)
+	cfg.Operator.Client = mgr.GetClient() // Mandatory for NewForConfig
+	cfg.Operator.Services = cfg.Services  // Mandatory for NewForConfig
+	reconciler, err := operator.NewForConfig[T](*cfg.Operator)
 	if err := cfg.ControllerManagerBuilder(mgr, reconciler); err != nil {
 		return nil, err
 	}

@@ -191,7 +191,14 @@ func TestReconcilerReconcileUpdatesStatusAndAddsFinalizer(t *testing.T) {
 		t.Fatalf("failed to create test object: %v", err)
 	}
 
-	reconciler := NewReconciler[*testObj](client, Config{FinalizerName: "finalizer"}, &testService{name: "reconcile-step"})
+	reconciler, err := NewForConfig(Config[*testObj]{
+		FinalizerName: "finalizer",
+		Client:        client,
+		Services:      []Service[*testObj]{&testService{name: "reconcile-step"}},
+	})
+	if err != nil {
+		t.Fatalf("failed to create reconciler: %v", err)
+	}
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "demo", Namespace: "default"}})
 	if err != nil {
 		t.Fatalf("reconcile returned error: %v", err)
@@ -237,12 +244,19 @@ func TestReconcilerFailSetsReadyFalseAndRequeues(t *testing.T) {
 		t.Fatalf("failed to create failing object: %v", err)
 	}
 
-	reconciler := NewReconciler[*testObj](client, Config{FinalizerName: "finalizer"}, &testService{name: "fail-step", applyErr: errors.New("boom")})
+	reconciler, err := NewForConfig(Config[*testObj]{
+		FinalizerName: "finalizer",
+		Client:        client,
+		Services:      []Service[*testObj]{&testService{name: "fail-step", applyErr: errors.New("boom")}},
+	})
+	if err != nil {
+		t.Fatalf("failed to create reconciler: %v", err)
+	}
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "demo", Namespace: "default"}})
 	if err != nil {
 		t.Fatalf("reconcile returned error: %v", err)
 	}
-	if result.RequeueAfter != 10_000_000_000 {
+	if result.RequeueAfter != time.Second {
 		t.Fatalf("unexpected requeue duration: %#v", result)
 	}
 

@@ -3,10 +3,11 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
-	"time"
 
+	"github.com/ing-bank/golibs/pkg/config"
 	"github.com/ing-bank/golibs/pkg/kube/log"
 	"github.com/ing-bank/golibs/pkg/opt"
 	"github.com/ing-bank/golibs/pkg/slices"
@@ -34,36 +35,70 @@ type Reconciler[T Obj] struct {
 	applyWf  *wf.Workflow[T]
 	deleteWf *wf.Workflow[T]
 
-	cfg Config
+	cfg     Config[T]
+	backoff retryBackoff
 }
 
-type Config struct {
-	FinalizerName string `json:"finalizerName"`
+// Config configures finalization and non-blocking retries of failed workflows.
+type Config[T Obj] struct {
+	FinalizerName string        `json:"finalizerName"`
+	Backoff       BackoffConfig `json:"backoff,omitempty"`
+	Client        client.Client `json:"-"` // Mandatory
+	Services      []Service[T]  `json:"-"` // Mandatory
 }
 
-func (c *Config) ApplyDefaults() {
+// ApplyDefaults fills unset configuration fields.
+func (c *Config[T]) ApplyDefaults() {
 	if c.FinalizerName == "" {
 		c.FinalizerName = "finalizer"
 	}
+	c.Backoff.ApplyDefaults()
 }
 
-// NewReconciler creates a Reconciler for resource type T that runs services in
-// order on apply and delete.
-func NewReconciler[T Obj](client client.Client, cfg Config, services ...Service[T]) *Reconciler[T] {
-	cfg.ApplyDefaults()
-	return &Reconciler[T]{
-		Client:   client,
-		applyWf:  Services[T](services).asWorkflow("apply", ActionApply[T], StatusWrapper[T]),
-		deleteWf: Services[T](services).asWorkflow("delete", ActionDelete[T], StatusWrapper[T]),
-		cfg:      cfg,
+// Validate checks the backoff configuration after defaults are applied.
+func (c *Config[T]) Validate() error {
+	if len(c.Services) == 0 {
+		return fmt.Errorf("at least one service must be provided")
 	}
+	if c.Client == nil {
+		return errors.New("client must be provided")
+	}
+
+	return c.Backoff.Validate()
+}
+
+func New[T Obj](client client.Client, services []Service[T], opts ...config.Option[*Config[T]]) (*Reconciler[T], error) {
+	cfg := Config[T]{
+		Client:   client,
+		Services: services,
+	}
+	if err := config.ApplyOptions(&cfg, opts...); err != nil {
+		return nil, fmt.Errorf("invalid option: %w", err)
+	}
+	return NewForConfig(cfg)
+}
+
+// NewForConfig creates a Reconciler for resource type T that runs services in
+// order on apply and delete. It returns an error if cfg is invalid after applying defaults.
+func NewForConfig[T Obj](cfg Config[T]) (*Reconciler[T], error) {
+	if err := config.Configure(&cfg); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	return &Reconciler[T]{
+		Client:   cfg.Client,
+		applyWf:  Services[T](cfg.Services).asWorkflow("apply", ActionApply[T], StatusWrapper[T]),
+		deleteWf: Services[T](cfg.Services).asWorkflow("delete", ActionDelete[T], StatusWrapper[T]),
+		cfg:      cfg,
+		backoff:  retryBackoff{cfg: cfg.Backoff},
+	}, nil
 }
 
 // Reconcile implements reconcile.Reconciler.
 func (r *Reconciler[T]) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	item := NewObject[T]()
 	if err := r.Client.Get(ctx, req.NamespacedName, item); err != nil {
-		return ctrl.Result{}, nil
+		return r.backoff.forget(req.NamespacedName), client.IgnoreNotFound(err)
 	}
 
 	ctx, logger := log.NewContextLogger(ctx, req.NamespacedName.String(), "gen="+item.GetResourceVersion())
@@ -75,7 +110,7 @@ func (r *Reconciler[T]) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		finalizers := item.GetFinalizers()
 		if !slices.Contains(finalizers, r.cfg.FinalizerName) {
 			logger.Infof("Object deleted")
-			return ctrl.Result{}, nil
+			return r.backoff.forget(req.NamespacedName), nil
 		}
 		logger.Infof("Handling deletion")
 		if err := r.deleteWf.Execute(ctx, item); err != nil {
@@ -84,13 +119,13 @@ func (r *Reconciler[T]) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		logger.Infof("Deletion handled successfully")
 		slices.Remove(&finalizers, r.cfg.FinalizerName)
 		item.SetFinalizers(finalizers)
-		return ctrl.Result{}, r.Client.Update(ctx, item)
+		return r.backoff.forget(req.NamespacedName), r.Client.Update(ctx, item)
 	}
 
 	if !slices.Contains(item.GetFinalizers(), r.cfg.FinalizerName) {
 		logger.Infof("Updating finalizers and requeueing")
 		item.SetFinalizers(append(item.GetFinalizers(), r.cfg.FinalizerName))
-		return ctrl.Result{}, r.Client.Update(ctx, item) // Will requeue
+		return r.backoff.forget(req.NamespacedName), r.Client.Update(ctx, item) // Will requeue
 	}
 
 	if err := r.applyWf.Execute(ctx, item); err != nil {
@@ -98,7 +133,7 @@ func (r *Reconciler[T]) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 	logger.Infof("Reconciliation handled successfully")
 	r.SetReady(item, metav1.ConditionTrue)
-	return ctrl.Result{}, r.Client.Status().Update(ctx, item)
+	return r.backoff.forget(req.NamespacedName), r.Client.Status().Update(ctx, item)
 }
 
 // Fail records err in the Ready condition and requeues the item.
@@ -108,12 +143,12 @@ func (r *Reconciler[T]) Fail(ctx context.Context, item T, err error) (ctrl.Resul
 	if updateErr := r.Client.Status().Update(ctx, item); updateErr != nil {
 		log.NewLoggerFromContext(ctx).Errorf(updateErr, "unable to update status")
 	}
-	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil // TODO: exponential backoff
+	return r.backoff.next(item), nil
 }
 
 // SetReady sets the Ready condition on item.
 func (r *Reconciler[T]) SetReady(item T, status metav1.ConditionStatus, optReason ...string) {
-	reason := opt.Opt("Ready", optReason)
+	reason := opt.Opt("All services completed", optReason)
 	meta.SetStatusCondition(item.GetConditions(), metav1.Condition{
 		Type:               "Ready",
 		Status:             status,
